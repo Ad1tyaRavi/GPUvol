@@ -1,0 +1,50 @@
+tier,gpu_count_bucket,series,median_ann_vol,p90_ann_vol,pct_series_ever_change,mean_daily_change_freq,median_jump
+Ada DC,fractional,0,,,,,
+Ada DC,1,796,0.0,0.6504,0.4686,0.148,0.0489
+Ada DC,2,99,0.1865,0.4097,0.5253,0.0319,0.049
+Ada DC,4,294,0.0,0.7233,0.3265,0.1233,0.0362
+Ada DC,8,148,0.0337,0.7619,0.5,0.1296,0.0489
+Ada DC,16+,0,,,,,
+Ada DC,other,0,,,,,
+Ampere DC,fractional,293,0.0,0.0,0.0922,0.0007,0.079
+Ampere DC,1,555,0.0,0.5172,0.2667,0.1082,0.0218
+Ampere DC,2,259,0.0,0.2796,0.2317,0.011,0.0513
+Ampere DC,4,246,0.0,0.5564,0.3211,0.0881,0.0481
+Ampere DC,8,341,0.0,0.4388,0.3079,0.0728,0.0133
+Ampere DC,16+,17,0.0,0.2812,0.4706,0.0173,0.0513
+Ampere DC,other,1,0.0,0.0,0.0,0.0,
+Blackwell DC,fractional,0,,,,,
+Blackwell DC,1,54,0.1608,1.0534,0.6296,0.1077,0.1908
+Blackwell DC,2,44,0.0864,0.8325,0.5455,0.0861,0.0402
+Blackwell DC,4,176,0.0,0.1254,0.1364,0.0215,0.0402
+Blackwell DC,8,198,0.0,0.5645,0.2929,0.0796,0.0513
+Blackwell DC,16+,0,,,,,
+Blackwell DC,other,8,0.0,0.0,0.0,0.0,
+Hopper DC,fractional,0,,,,,
+Hopper DC,1,211,0.136,0.7084,0.5592,0.0773,0.0952
+Hopper DC,2,134,0.136,0.6383,0.5746,0.0732,0.0742
+Hopper DC,4,80,0.2698,0.5673,0.6875,0.1144,0.0513
+Hopper DC,8,460,0.0,0.427,0.3283,0.0679,0.0495
+Hopper DC,16+,0,,,,,
+Hopper DC,other,20,0.0,0.0,0.0,0.0,
+Legacy DC,fractional,0,,,,,
+Legacy DC,1,737,0.0,0.4027,0.2564,0.1008,0.0223
+Legacy DC,2,187,0.0,0.0,0.0321,0.0053,0.0094
+Legacy DC,4,2379,0.0,0.3527,0.4687,0.0498,0.0468
+Legacy DC,8,739,0.0,0.4273,0.4344,0.0622,0.0489
+Legacy DC,16+,0,,,,,
+Legacy DC,other,0,,,,,
+"Other (TPU, misc)",fractional,0,,,,,
+"Other (TPU, misc)",1,198,0.0,0.0,0.0303,0.0008,0.0679
+"Other (TPU, misc)",2,10,0.0,0.0217,0.1,0.0015,0.0916
+"Other (TPU, misc)",4,8,0.0,0.0651,0.125,0.0019,0.0916
+"Other (TPU, misc)",8,91,0.0,0.0,0.011,0.0002,0.0916
+"Other (TPU, misc)",16+,0,,,,,
+"Other (TPU, misc)",other,12,0.0,0.217,0.3333,0.0051,0.0916
+Workstation/consumer,fractional,252,0.0,0.3337,0.4881,0.0568,0.0362
+Workstation/consumer,1,508,0.0,1.1514,0.4882,0.1031,0.0298
+Workstation/consumer,2,171,0.0,1.2887,0.4854,0.1042,0.0384
+Workstation/consumer,4,173,0.0,1.2928,0.474,0.0889,0.038
+Workstation/consumer,8,199,0.0,1.2512,0.4271,0.0849,0.0421
+Workstation/consumer,16+,0,,,,,
+Workstation/consumer,other,54,0.0,0.2562,0.1111,0.0021,0.1382
