@@ -1,5 +1,5 @@
 ,series,share_LB10_sig_r,share_LB10_sig_abs_r,share_LB10_sig_r2,median_acf1_r,median_acf1_abs_r,null_median_acf1_abs_r_p95
-AWS spot listings,520.0,0.6692,0.5808,0.1981,0.2551,0.1812,-0.0083
+AWS spot listings,520.0,0.6692,0.5808,0.1981,0.2551,0.1812,-0.0082
 "AWS spot listings, AR-filtered",520.0,0.1981,0.5173,0.1596,-0.0031,0.1472,-0.0101
-spot chained indexes,13.0,0.1538,0.3077,0.0769,-0.0127,-0.0104,0.0051
-"spot chained indexes, AR-filtered",13.0,0.2308,0.3077,0.1538,-0.0074,-0.0074,-0.0027
+spot chained indexes,13.0,0.1538,0.3077,0.0769,-0.0127,-0.0104,0.0031
+"spot chained indexes, AR-filtered",13.0,0.2308,0.3077,0.1538,-0.0074,-0.0074,0.0006

@@ -15,44 +15,21 @@ Outputs go to ./out.
 """
 import os
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 from scipy.stats import chi2
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
-os.makedirs(OUT, exist_ok=True)
+from common import (BLUE, GRID, MUTED, ORANGE, OUT, aws_spot_active, ar_filter, load_returns,
+                    shuffle_cols, spot_chained_indexes)
+
 LAGS = 20
 LB_LAGS = 10       # Ljung-Box Q(10)
 N_SHUFFLE = 200
 rng = np.random.default_rng(0)
 
-BLUE, ORANGE, INK, MUTED, GRID = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e", "#e6e5e0"
-plt.rcParams.update({
-    "figure.facecolor": "#fcfcfb", "axes.facecolor": "#fcfcfb", "axes.edgecolor": GRID,
-    "axes.labelcolor": MUTED, "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK,
-    "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.8, "axes.axisbelow": True,
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
-})
+R_all, meta, days = load_returns()
 
-# ------------------------------------------------------------------ load (same cleaning as analysis.py)
-df = pd.read_parquet(os.path.join(HERE, "all.parquet"))
-df = df[(df.quality == "ok") & (df.gpu_count > 0) & (df.price_per_hour > 0)
-        & (df.gpu_type != "Unknown") & (df.provider != "datacrunch")].copy()
-df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
-# Log returns are scale-free, so $/instance vs $/GPU (and the fractional-GPU fix) doesn't matter here.
-key = ["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count", "vcpus", "ram_gb"]
-daily = (df.sort_values("timestamp").groupby(key + ["day"], dropna=False).price_per_hour.last()
-         .reset_index())
-daily["sid"] = daily.groupby(key, dropna=False).ngroup()
-days = pd.date_range(daily.day.min(), daily.day.max(), freq="D")
-logp = np.log(daily.pivot(index="day", columns="sid", values="price_per_hour").reindex(days))
-R_all = logp.diff()  # NaN unless both consecutive calendar days have a price
-meta = daily.drop_duplicates("sid").set_index("sid")[key]
 
 
 # ------------------------------------------------------------------ stats
@@ -78,15 +55,6 @@ def ljung_box(rho, n, h=LB_LAGS):
     return q, chi2.sf(q, h)
 
 
-def shuffle_cols(X):
-    """Permute each column's observed values among its own observed positions."""
-    Y = X.copy()
-    for j in range(X.shape[1]):
-        m = ~np.isnan(X[:, j])
-        Y[m, j] = rng.permutation(X[m, j])
-    return Y
-
-
 def analyse(R, label):
     """ACF of r, |r|, r^2 per series + Ljung-Box + shuffle baseline for the median |r| ACF."""
     X = R.to_numpy()
@@ -95,7 +63,7 @@ def analyse(R, label):
         rho, n = acf(Z)
         q, p = ljung_box(rho, n)
         res[name] = dict(rho=rho, n=n, q=q, p=p)
-    null_med = np.array([np.nanmedian(acf(np.abs(shuffle_cols(X)))[0], axis=1) for _ in range(N_SHUFFLE)])
+    null_med = np.array([np.nanmedian(acf(np.abs(shuffle_cols(X, rng)))[0], axis=1) for _ in range(N_SHUFFLE)])
     per_series = pd.DataFrame({
         "n_returns": res["r"]["n"],
         "chg_freq": (np.abs(np.nan_to_num(X)) > 1e-9).sum(0) / res["r"]["n"],
@@ -123,45 +91,9 @@ def analyse(R, label):
     return per_series, curve, summary
 
 
-def ar_filter(R, pmax=5):
-    """Remove the predictable (trend/momentum) part of each series before testing |r|.
-
-    Per column: fit AR(p) with intercept by OLS for p = 0..pmax on rows where r_t and all pmax
-    lags exist (a common sample, so BIC compares like with like), pick p by BIC, return the
-    residuals e_t (NaN elsewhere) and the chosen p. Clustering is then tested on |e|, which no
-    longer inherits autocorrelation from r itself."""
-    X = R.to_numpy()
-    T, N = X.shape
-    E = np.full_like(X, np.nan)
-    chosen = np.zeros(N, dtype=int)
-    for j in range(N):
-        x = X[:, j]
-        L = np.column_stack([np.r_[np.full(k, np.nan), x[:-k]] for k in range(1, pmax + 1)])
-        rows = ~np.isnan(x) & ~np.isnan(L).any(axis=1)
-        n = rows.sum()
-        if n < 30:
-            continue
-        y, Lr = x[rows], L[rows]
-        best = None
-        for p in range(pmax + 1):
-            A = np.column_stack([np.ones(n), Lr[:, :p]])
-            beta, *_ = np.linalg.lstsq(A, y, rcond=None)
-            resid = y - A @ beta
-            rss = max((resid ** 2).sum(), 1e-300)
-            bic = n * np.log(rss / n) + (p + 1) * np.log(n)
-            if best is None or bic < best[0]:
-                best = (bic, p, resid)
-        E[rows, j] = best[2]
-        chosen[j] = best[1]
-    return pd.DataFrame(E, index=R.index, columns=R.columns), pd.Series(chosen, index=R.columns, name="ar_p")
-
 
 # ------------------------------------------------------------------ A. AWS spot listings
-aws_ids = meta.index[(meta.provider == "aws") & meta.is_spot]
-R_aws = R_all[aws_ids]
-n_ret = R_aws.notna().sum()
-moves = (R_aws.abs() > 1e-9).sum() / n_ret
-R_aws = R_aws.loc[:, (n_ret >= 100) & (moves >= 0.3)]  # enough data and enough movement
+R_aws = aws_spot_active(R_all, meta)  # >= 100 returns and moves on >= 30% of days
 aws_series, aws_curve, aws_sum = analyse(R_aws, "AWS spot listings")
 E_aws, aws_p = ar_filter(R_aws)
 awsf_series, awsf_curve, awsf_sum = analyse(E_aws, "AWS spot listings, AR-filtered")
@@ -171,14 +103,9 @@ aws_curve.round(4).to_csv(os.path.join(OUT, "clustering_aws_spot_acf.csv"), inde
 awsf_curve.round(4).to_csv(os.path.join(OUT, "clustering_aws_spot_acf_filtered.csv"), index=False)
 
 # ------------------------------------------------------------------ B. spot chained indexes
-# Same construction as analysis.py: daily mean of same-listing returns, >= 3 listings, no Vast.ai.
-long = R_all.stack().rename("r").reset_index().rename(columns={"level_0": "day"})
-long = long.join(meta, on="sid")
-long = long[(long.provider != "vastai") & long.is_spot]
-ch = long.groupby(["gpu_type", "day"]).r.agg(["mean", "size"])
-ch = ch[ch["size"] >= 3]["mean"].unstack("gpu_type").reindex(days)
-ch = ch.loc[:, ch.notna().sum() >= 150]
-ch = ch.loc[:, (ch.abs() > 1e-9).sum() / ch.notna().sum() >= 0.1]  # drop indexes that (almost) never move
+# Same construction as analysis.py: daily mean of same-listing returns, >= 3 listings, no Vast.ai;
+# indexes that (almost) never move are dropped.
+ch = spot_chained_indexes(R_all, meta)
 idx_series, idx_curve, idx_sum = analyse(ch, "spot chained indexes")
 E_idx, idx_p = ar_filter(ch)
 idxf_series, idxf_curve, idxf_sum = analyse(E_idx, "spot chained indexes, AR-filtered")
