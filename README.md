@@ -36,19 +36,6 @@ H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.
 providers sell what. Most providers charge a flat per-GPU price; 16+ GPU nodes are 8-19% cheaper
 per GPU.
 
-## What didn't hold up
-
-Several early results turned out to be artifacts, caught by `audit.py`:
-
-- The first price index said H100 spot had doubled. GCP lists one price under many regions, so
-  it was counted many times; fixing that gave ~+60%, and dropping one odd day (2026-07-23) ~+40%.
-- Clustering in the H200/B200 indexes and in Nebius was weekly schedules and Nebius's October
-  regime switch.
-- Cross-provider links came from one or two odd days, mainly 2026-07-23, when AWS spot jumped
-  ~10% across the board and GCP repriced off-schedule. Those days are excluded.
-- The textbook GARCH likelihood-ratio test flagged ~30% of *shuffled* series. Significance is
-  calibrated against shuffled data instead.
-
 ## Method
 
 - One series per listing (provider, instance, region, spot/on-demand, config); daily log returns
@@ -63,6 +50,12 @@ Several early results turned out to be artifacts, caught by `audit.py`:
   weekly schedules and slow regime changes don't count.
 - AR filter, Ljung-Box and GARCH(1,1) are written out by hand (numpy/scipy) to handle missing
   days.
+
+## Data quirks
+
+FYI, `audit.py` checks for these: GCP reprices in Monday batches and copies one price across
+many regions, Nebius changed pricing systems on 2026-10-20, and two days (2026-05-25, 2026-07-23)
+look off and are excluded.
 
 ## Caveats
 
