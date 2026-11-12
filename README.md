@@ -1,54 +1,90 @@
 # GPU rental price volatility
 
-How volatile are cloud GPU rental prices, and along which axes (provider, spot vs on-demand,
-GPU tier, region, GPUs per instance)?
+How do cloud GPU rental prices move, and does their volatility cluster the way it does in
+financial markets?
 
-## Data
+Data: [`afhubbard/gpu-prices`](https://huggingface.co/datasets/afhubbard/gpu-prices), listed
+prices from 13+ providers (AWS, GCP, Azure, OCI, Lambda, RunPod, Nebius, Verda, Vultr, ...),
+scraped 1-3 times a day from January to November 2026. About 3.7M GPU listing rows.
 
-[`afhubbard/gpu-prices`](https://huggingface.co/datasets/afhubbard/gpu-prices) (CC-BY-4.0):
-listed prices from 13+ cloud providers (AWS, GCP, Azure, OCI, Lambda, RunPod, Vast.ai,
-Nebius, Verda, Vultr, ...), scraped 1-3x daily via `gpuhunt`, Jan-Nov 2026.
-One row = one listing at one snapshot (provider, instance type, region, GPU type/count/memory,
-spot flag, $/hr). These are *list* prices: no transaction, volume or reserved-contract data.
+## Findings
+
+**Spot moves, on-demand doesn't.** Spot prices change on about 17% of days, on-demand on less
+than 1%. Over the year H100 spot roughly doubled while on-demand B200 and H200 rose 7-12%.
+
+**Every provider has its own pricing machine.** AWS nudges spot prices almost daily in ~1.5%
+steps. GCP reprices in batches on Mondays. Verda is the only one with dynamic on-demand prices,
+and it goes quiet on weekends. Nebius was static until 20 Oct 2026, then switched to daily
+dynamic pricing. OCI, Lambda and Vultr barely move at all.
+
+**AWS spot volatility clusters.** A price change makes another one far more likely over the
+next week or two (about 11x vs 2x by chance). It's strongest for Hopper and Blackwell chips. The
+clustering is in many small moves rather than big jumps, so GARCH only picks up a weak version
+of it.
+
+**AWS spot prices trend.** Day-to-day returns are autocorrelated (~0.26 at lag 1), which you
+wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing removes it.
+
+**Providers reprice alone.** Within a provider, listings change together (pairwise correlation
+0.70-0.92). Across providers there's no more co-movement than chance, even for the same chip.
+
+**Same chip, very different prices.** On a typical day the priciest A100 is ~7.8x the cheapest,
+H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.
+
+**Other axes matter less.** GPU tier, region and node size differences mostly reflect which
+providers sell what. Most providers charge a flat per-GPU price; 16+ GPU nodes are 8-19% cheaper
+per GPU.
+
+## What didn't hold up
+
+Several early results turned out to be artifacts, caught by `audit.py`:
+
+- Clustering in the H200/B200 indexes and in Nebius was weekly schedules and Nebius's October
+  regime switch.
+- Cross-provider links came from one or two odd days, mainly 2026-07-23, when AWS spot jumped
+  ~10% across the board and GCP repriced off-schedule. Those days are excluded.
+- GCP and Verda list one price under many regions, so their listings were double counted.
+- The textbook GARCH likelihood-ratio test flagged ~30% of *shuffled* series. Significance is
+  calibrated against shuffled data instead.
 
 ## Method
 
-**Cleaning:** GPU listings only; price normalized to $/GPU-hour; DataCrunch dropped (rebranded to
-Verda, duplicate rows); fractional vGPU slices (Vultr, Azure A10, GCP RTX PRO 6000) converted to
-effective GPUs by memory share; Vast.ai excluded from index-level results (offers churn daily and
-only a few are sampled per GPU).
-
-1. **Listing-level volatility:** a series = one exact SKU (provider, instance, region, spot, config).
-   Daily log returns on consecutive days only. Prices are sticky and move in jumps, so volatility is
-   split into **change frequency** (share of days the price moves) and **jump size** (median |return|
-   when it moves), alongside the usual std. Summarized by provider, provider class, market, GPU tier,
-   region group and GPU count.
-2. **Provider index:** daily median $/GPU-hr per provider x GPU x market.
-3. **Matched-listing (chained) index:** each day's return is the mean return over listings present on
-   both days, so the trend is not distorted by listings entering/leaving.
-4. **Cross-provider dispersion:** max/min $/GPU-hr across providers for the same GPU on the same day.
-5. **GPU count:** volatility by GPUs per instance, and per-GPU price of n-GPU vs 1-GPU instances.
-
-## Findings (so far)
-
-- Spot prices change on ~17% of days; on-demand on <1%.
-- Providers run very different spot regimes: AWS moves ~75% of days in ~1.5% steps; GCP ~8% of days
-  in ~5% steps; Nebius rarely but ~38% jumps; Azure almost never. Verda is the only provider with
-  frequently changing on-demand prices.
-- Matched-listing index, Jan to Nov 2026: H100 spot +96%, B200 spot +114%, while on-demand B200 +7%,
-  H200 +12%. Spot absorbs demand pressure; list prices barely move.
-- Same chip, same day: priciest/cheapest provider is ~4.6x for H100, ~7.8x for A100.
-- Per-GPU pricing is mostly linear in node size; 16+ GPU nodes are ~8-19% cheaper per GPU.
+- One series per listing (provider, instance, region, spot/on-demand, config); daily log returns
+  on consecutive days only.
+- Volatility split into how often a price changes and how big the change is, since prices sit
+  flat and then jump.
+- Trends use a matched-listing index (only listings present on both days), so listings coming
+  and going don't move it.
+- Clustering tests are compared against shuffles within the same weekday and 30-day block, so
+  weekly schedules and slow regime changes don't count.
+- AR filter, Ljung-Box and GARCH(1,1) are written out by hand (numpy/scipy) to handle missing
+  days.
 
 ## Caveats
 
-Listing-weighted (GCP/AWS regional SKUs dominate); list prices only; √365 annualization is a poor fit
-for a jump process; region effects are largely provider mix; ~230 days of one market regime.
+List prices only: no transactions, volumes or reserved contracts. About 230 days, all in a
+rising market. Listings are equally weighted, so AWS and GCP dominate. `analysis.py` predates the
+audit fixes, so its trend numbers (e.g. H100 spot +96%) include 2026-07-23 and GCP duplicates.
 
-## Run
+## Files
+
+| File | |
+|---|---|
+| `download.py` | fetch the dataset into `data/` |
+| `analysis.py` | volatility by axis, price indexes, cross-provider spreads |
+| `clustering.py` | autocorrelation and Ljung-Box tests |
+| `event_clustering.py` | do price changes come in bursts? |
+| `market_sync.py` | do listings and providers reprice together? |
+| `garch.py` | GARCH(1,1) with calibrated significance |
+| `audit.py` | checks for scraper and schedule artifacts |
+| `common.py` | shared loading and cleaning |
+
+Results and charts go to `out/`. Set `GPUVOL_KEEP_SUSPECT=1` to rerun with the excluded days
+kept (outputs in `out/with_suspect_days/`).
 
 ```bash
-pip install pandas pyarrow numpy matplotlib
-python download.py   # fetch parquet snapshots into ./data
-python analysis.py   # tables + charts into ./out
+pip install pandas numpy scipy matplotlib pyarrow
+python download.py
+python analysis.py
+python clustering.py && python event_clustering.py && python market_sync.py && python garch.py
 ```
