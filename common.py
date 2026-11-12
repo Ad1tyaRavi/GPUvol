@@ -22,7 +22,7 @@ SUSPECT_DAYS = pd.to_datetime(["2026-05-25", "2026-07-23"])
 KEEP_SUSPECT = os.environ.get("GPUVOL_KEEP_SUSPECT") == "1"
 # Nebius spot switched from near-static to daily dynamic pricing on this day; the two regimes are
 # split into separate series so a regime switch can't pass as clustering.
-NEBIUS_REGIME_START = pd.Timestamp("2026-10-20")
+NEBIUS_REGIME_START = pd.Timestamp("2026-10-08")
 POST_OFFSET = 10_000_000  # series-id offset for the post-switch Nebius series
 
 OUT = os.path.join(HERE, "out", "with_suspect_days") if KEEP_SUSPECT else os.path.join(HERE, "out")
@@ -70,8 +70,8 @@ def clean_returns(R, meta):
     meta = meta.copy()
     meta_post = meta.loc[nb].copy()
     meta_post.index = meta_post.index + POST_OFFSET
-    meta.loc[nb, "provider"] = "nebius_pre_oct20"
-    meta_post["provider"] = "nebius_post_oct20"
+    meta.loc[nb, "provider"] = "nebius_static"
+    meta_post["provider"] = "nebius_dynamic"
     return pd.concat([R, post], axis=1), pd.concat([meta, meta_post])
 
 

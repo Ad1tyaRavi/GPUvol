@@ -14,7 +14,7 @@ Null: shuffle each listing's event days only among days with the same weekday in
 30-day block (keeps its change rate, gaps, weekly schedule and slow regime shifts; destroys
 short-horizon timing) and recompute the pooled lift, 200 times -> 95% band. So GCP's Monday
 batches and Nebius's October switch to dynamic pricing can't pass as bursts.
-Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-20)
+Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-08)
 come via common.py.
 """
 import os
@@ -109,6 +109,17 @@ for k in range(1, MAX_LAG + 1):
 curves = pd.DataFrame(curves).T
 curves.index.name = "lag"
 curves.round(4).to_csv(os.path.join(OUT, "events_lift_by_lag.csv"))
+
+# Same blocked-shuffle null, at every lag (100 shuffles), so the decay curve has a baseline too.
+null_k = {k: [] for k in range(1, MAX_LAG + 1)}
+for _ in range(100):
+    Is = shuffle_cols_blocked(I, rng, R.index)
+    for k in range(1, MAX_LAG + 1):
+        null_k[k].append(pooled_lift(pair_counts(Is, k), pm)[0])
+band = pd.concat({k: pd.concat(v, axis=1).quantile([0.025, 0.975], axis=1).T for k, v in null_k.items()})
+band.index.names = ["lag", "group"]
+band.columns = ["null_p025", "null_p975"]
+band.round(4).to_csv(os.path.join(OUT, "events_lift_by_lag_null.csv"))
 
 # ------------------------------------------------------------------ chart
 t = tables["provider_x_market"]

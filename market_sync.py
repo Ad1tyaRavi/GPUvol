@@ -17,7 +17,7 @@ don't count as providers moving together. Correlations are Spearman (rank), so o
 day can't drive them.
 Null for B and C: circularly shift one series by a random whole number of weeks, 500 times; a
 correlation is called significant if |corr| exceeds the 95th percentile of shifted |corr|.
-Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-20)
+Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-08)
 come via common.py.
 """
 import itertools

@@ -1,5 +1,5 @@
 ,fits,median_alpha,share_alpha_ge_0.01,median_persistence_if_alpha,median_half_life_days_if_alpha,share_LR_sig_textbook_chi2,share_LR_sig_calibrated,share_converged
 AWS spot listings,519.0,0.3267,0.9191,0.9577,16.0496,0.8555,0.1195,1.0
 AWS spot listings (shuffled),519.0,0.1112,0.8035,0.9638,18.7846,0.578,0.0501,1.0
-spot GPU indexes,11.0,0.201,0.5455,0.8778,5.3204,0.5455,0.2727,1.0
-spot GPU indexes (shuffled),220.0,0.0264,0.5773,0.9565,15.5752,0.4591,0.05,1.0
+spot GPU indexes,11.0,0.2011,0.5455,0.8778,5.3204,0.5455,0.2727,1.0
+spot GPU indexes (shuffled),220.0,0.0272,0.5773,0.9565,15.5752,0.4591,0.05,1.0

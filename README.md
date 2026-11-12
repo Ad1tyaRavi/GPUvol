@@ -9,25 +9,33 @@ scraped 1-3 times a day from January to November 2026. About 3.7M GPU listing ro
 
 ## Findings
 
-**Spot moves, on-demand doesn't.** Spot prices change on about 20% of days, on-demand on well
-under 1%. From January to November, spot H100 rose ~40%, B200 ~45% and L40S ~60%, while
-on-demand prices for the same chips moved 0-8%.
+**Every provider has its own pricing machine.** AWS nudges spot prices almost daily. GCP
+reprices in batches, mostly on Mondays. Verda is the only one whose on-demand prices move.
+Nebius was static until 8 Oct 2026, then switched to daily dynamic pricing.
 
-**Every provider has its own pricing machine.** AWS nudges spot prices almost daily in ~1.5%
-steps. GCP reprices in batches on Mondays. Verda is the only one with dynamic on-demand prices,
-and it goes quiet on weekends. Nebius was static until 20 Oct 2026, then switched to daily
-dynamic pricing. OCI, Lambda and Vultr barely move at all.
+![Four providers, four pricing styles](docs/img/pricing_styles.png)
+
+OCI, Lambda and Vultr don't move at all:
+
+![How often each provider changes prices](docs/img/change_frequency.png)
+
+**Spot moves, on-demand doesn't.** From January to November, spot H100 rose ~40% and B200 and
+L40S ~55%, while on-demand prices for the same chips barely moved.
+
+![Spot vs on-demand price index](docs/img/spot_vs_ondemand_index.png)
 
 **AWS spot volatility clusters.** A price change makes another one far more likely over the
-next week or two (about 11x vs 2x by chance). It's strongest for Hopper and Blackwell chips. The
-clustering is in many small moves rather than big jumps, so GARCH only picks up a weak version
-of it.
+next two weeks. It's strongest for Hopper and Blackwell chips. The clustering is in many small
+moves rather than big jumps, so GARCH only picks up a weak version of it.
+
+![AWS spot price changes come in bursts](docs/img/aws_bursts.png)
 
 **AWS spot prices trend.** Day-to-day returns are strongly autocorrelated (~0.5 at lag 1), which
 you wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing removes it.
 
 **Providers reprice alone.** Within a provider, listings change together (pairwise correlation
-0.70-0.92). Across providers there's no more co-movement than chance, even for the same chip.
+0.70-0.92). Across providers the links are weak (correlations of 0.25 or less), even for the
+same chip.
 
 **Same chip, very different prices.** On a typical day the priciest A100 is ~6.6x the cheapest,
 H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.
@@ -54,8 +62,8 @@ per GPU.
 ## Data quirks
 
 FYI, `audit.py` checks for these: GCP reprices in Monday batches and copies one price across
-many regions, Nebius changed pricing systems on 2026-10-20, and two days (2026-05-25, 2026-07-23)
-look off and are excluded.
+many regions, Nebius changed pricing systems on 2026-10-08, and two days (2026-05-25, 2026-07-23)
+look off and are excluded. The dataset has no snapshots from 2026-03-10 to 2026-05-07.
 
 ## Caveats
 
@@ -75,6 +83,7 @@ real market move is unknown; with it kept, spot trends are higher (H100 ~+60%).
 | `garch.py` | GARCH(1,1) with calibrated significance |
 | `audit.py` | checks for scraper and schedule artifacts |
 | `common.py` | shared loading and cleaning |
+| `readme_figures.py` | the charts in this README (`docs/img/`) |
 
 Results and charts go to `out/`. Set `GPUVOL_KEEP_SUSPECT=1` to rerun with the excluded days
 kept (outputs in `out/with_suspect_days/`).
@@ -84,4 +93,5 @@ pip install pandas numpy scipy matplotlib pyarrow
 python download.py
 python analysis.py
 python clustering.py && python event_clustering.py && python market_sync.py && python garch.py
+python readme_figures.py
 ```

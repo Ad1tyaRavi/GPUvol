@@ -1,3 +1,3 @@
 market,series,median_ann_vol,p90_ann_vol,pct_series_ever_change,mean_daily_change_freq,median_jump
-spot,2671,0.2777,0.6045,0.7379,0.2064,0.0362
-on-demand,5771,0.0,0.0,0.0104,0.0019,0.01
+spot,2692,0.277,0.6056,0.734,0.208,0.0364
+on-demand,5805,0.0,0.0,0.0103,0.0019,0.01

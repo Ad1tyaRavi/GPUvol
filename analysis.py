@@ -6,7 +6,7 @@ Two levels of analysis:
   2. Index level: per (provider, gpu_type, spot) daily median $/GPU-hr. This handles
      marketplaces (Vast.ai) whose listing IDs churn every day.
 Same data-hygiene fixes as the clustering scripts (see audit.py / common.py): Nebius split at its
-2026-10-20 regime switch, suspect days dropped, identical listing return paths collapsed.
+2026-10-08 regime switch, suspect days dropped, identical listing return paths collapsed.
 Outputs go to ./out (CSV tables + PNG charts), or out/with_suspect_days/ if GPUVOL_KEEP_SUSPECT=1.
 """
 import os
@@ -44,9 +44,9 @@ df["ppg"] = df.price_per_hour / df.eff_gpus  # $ per (full) GPU-hour
 df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
 df["market"] = np.where(df.is_spot, "spot", "on-demand")
 df["region_group"] = df.region_group.fillna("Unknown")
-# Nebius: static spot pricing until 2026-10-20, daily dynamic after. Treat as two providers.
+# Nebius: static spot pricing until 2026-10-07, daily dynamic from 2026-10-08. Treat as two providers.
 nb = df.provider == "nebius"
-df.loc[nb, "provider"] = np.where(df.loc[nb, "day"] < NEBIUS_REGIME_START, "nebius_pre_oct20", "nebius_post_oct20")
+df.loc[nb, "provider"] = np.where(df.loc[nb, "day"] < NEBIUS_REGIME_START, "nebius_static", "nebius_dynamic")
 # Suspect days (likely scraper/catalog changes): dropping the rows also drops the next day's return,
 # because returns require consecutive days.
 if not KEEP_SUSPECT:
@@ -184,6 +184,7 @@ chain_sum["ann_vol"] = chain_sum.daily_vol * np.sqrt(365)
 chain_sum = chain_sum[chain_sum.days >= 60].round(3)
 chain_sum.to_csv(os.path.join(OUT, "chained_index.csv"))
 chain["level"] = chain.groupby(["gpu_type", "market"])["mean"].cumsum().pipe(np.exp)
+chain.round(5).to_csv(os.path.join(OUT, "chained_index_daily.csv"), index=False)
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)
 for ax, m in zip(axes, ["on-demand", "spot"]):
