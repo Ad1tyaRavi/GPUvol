@@ -17,7 +17,8 @@ Tests:
     The textbook chi2(2) threshold is badly oversized here: on shuffled residuals (no clustering
     by construction) it rejects ~30-45% of the time, because the residuals are zero-heavy with
     occasional jumps, far from Gaussian. So the threshold is calibrated instead: refit after
-    shuffling each series over its own observed days, and call a series significant if its LR beats
+    shuffling each series within weekday x 30-day blocks (keeps weekly schedules and slow regime
+    shifts, destroys short-horizon timing), and call a series significant if its LR beats
     the shuffled 95th percentile (per series, 20 shuffles, for the indexes; pooled over listings,
     1 shuffle each, for AWS).
   * Persistence alpha + beta only means something when alpha > 0: with alpha = 0 the variance is
@@ -31,7 +32,7 @@ import pandas as pd
 from scipy.optimize import minimize
 from scipy.stats import chi2
 
-from common import BLUE, MUTED, ORANGE, OUT, ar_filter, aws_spot_active, load_returns, shuffle_cols, spot_chained_indexes
+from common import BLUE, MUTED, ORANGE, OUT, ar_filter, aws_spot_active, load_returns, shuffle_cols_blocked, spot_chained_indexes
 
 SCALE = 100.0  # fit on percent returns for numerical stability
 rng = np.random.default_rng(3)
@@ -96,7 +97,7 @@ def fit_all(E, label, reps=1):
         if r is not None:
             rows[col] = r
     for k in range(reps):
-        S = shuffle_cols(X, rng)
+        S = shuffle_cols_blocked(X, rng, E.index)
         for j, col in enumerate(E.columns):
             rn = fit_garch(S[:, j])
             if rn is not None:

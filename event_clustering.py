@@ -10,8 +10,12 @@ lift > 1  -> changes cluster: a change makes another one soon more likely
 lift < 1  -> changes repel: after a change the price tends to sit still
 
 Counts are pooled within a group (provider x market, GPU tier, ...) over consecutive-day pairs only.
-Null: shuffle each listing's event days over its own observed days (keeps its change rate and gaps,
-destroys timing) and recompute the pooled lift, 200 times -> 95% band.
+Null: shuffle each listing's event days only among days with the same weekday inside the same
+30-day block (keeps its change rate, gaps, weekly schedule and slow regime shifts; destroys
+short-horizon timing) and recompute the pooled lift, 200 times -> 95% band. So GCP's Monday
+batches and Nebius's October switch to dynamic pricing can't pass as bursts.
+Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-20)
+come via common.py.
 """
 import os
 
@@ -19,7 +23,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import BLUE, EPS, GRID, INK, MUTED, ORANGE, OUT, load_returns, shuffle_cols
+from common import BLUE, EPS, GRID, INK, MUTED, ORANGE, OUT, dedupe_paths, load_returns, shuffle_cols_blocked
 
 TIER = {
     **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
@@ -40,7 +44,7 @@ meta = meta.assign(market=np.where(meta.is_spot, "spot", "on-demand"),
 n_obs = R.notna().sum()
 n_chg = (R.abs() > EPS).sum()
 keep = (meta.provider != "vastai") & (n_obs >= 100) & (n_chg >= 10) & (n_chg / n_obs <= 0.95)
-R = R.loc[:, keep[keep].index]
+R = dedupe_paths(R.loc[:, keep[keep].index])
 meta = meta.loc[R.columns]
 I = np.where(np.isnan(R.to_numpy()), np.nan, (np.abs(R.to_numpy()) > EPS).astype(float))
 
@@ -70,7 +74,7 @@ GROUPINGS = {
 c1 = pair_counts(I, 1)
 null = {name: [] for name in GROUPINGS}
 for _ in range(N_SHUFFLE):
-    c1s = pair_counts(shuffle_cols(I, rng), 1)
+    c1s = pair_counts(shuffle_cols_blocked(I, rng, R.index), 1)
     for name, grp in GROUPINGS.items():
         null[name].append(pooled_lift(c1s[grp.notna().to_numpy()], grp.dropna())[0])
 
@@ -109,15 +113,17 @@ curves.round(4).to_csv(os.path.join(OUT, "events_lift_by_lag.csv"))
 # ------------------------------------------------------------------ chart
 t = tables["provider_x_market"]
 t = t.sort_values("lift_lag1")
-fig, axes = plt.subplots(1, 2, figsize=(13, 0.34 * len(t) + 1.6), gridspec_kw={"width_ratios": [1, 1.2]})
+fig, axes = plt.subplots(1, 2, figsize=(14, max(4.5, 0.34 * len(t) + 1.6)), gridspec_kw={"width_ratios": [1, 1.2]})
 ax = axes[0]
 y = np.arange(len(t))
 ax.hlines(y, t.null_p025, t.null_p975, color=MUTED, lw=6, alpha=0.25, label="no-clustering range (shuffled, 95%)")
-ax.scatter(t.lift_lag1, y, color=[ORANGE if c == "yes" else BLUE if c == "repels" else MUTED for c in t.clusters],
+ax.scatter(t.lift_lag1.clip(lower=0.2), y,  # lift 0 (GCP) drawn at the axis floor
+           color=[ORANGE if c == "yes" else BLUE if c == "repels" else MUTED for c in t.clusters],
            s=40, zorder=3)
 ax.axvline(1, color=MUTED, lw=0.8)
 ax.set_yticks(y, t.index)
 ax.set_xscale("log")
+ax.set_xlim(0.15, None)
 ax.set_xlabel("lift = P(change | change yesterday) / P(change | no change yesterday)   (log scale)")
 ax.set_title("Lag-1 lift by provider and market", loc="left", fontsize=11)
 ax.grid(axis="y", visible=False)
@@ -126,8 +132,9 @@ ax.legend(frameon=False, fontsize=8, loc="lower right")
 ax = axes[1]
 colors = ["#2a78d6", "#eb6834", "#1baf7a", "#6250d6", "#e87ba4"]
 for g, c in zip(curve_groups, colors):
-    ax.plot(curves.index, curves[g], color=c, lw=2, marker="o", ms=4, label=g)
-    ax.text(MAX_LAG + 0.2, curves[g].iloc[-1], g, fontsize=8, color=MUTED, va="center")
+    ax.plot(curves.index, curves[g].where(curves[g] > 0), color=c, lw=2, marker="o", ms=4, label=g)
+    last = curves[g].where(curves[g] > 0).dropna()
+    ax.text(last.index[-1] + 0.2, last.iloc[-1], g, fontsize=8, color=MUTED, va="center")
 ax.axhline(1, color=MUTED, lw=0.8)
 ax.set_yscale("log")
 ax.set_xlabel("lag k (days)")

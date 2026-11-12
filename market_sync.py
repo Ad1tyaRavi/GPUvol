@@ -11,10 +11,14 @@ B. Across providers: correlation of daily activity, same day and lead-lag (provi
    provider Y today), plus the same for direction (mean log return of the provider's spot listings).
 C. Same chip, different providers: per-GPU spot index per provider; same-day and lead-lag return
    correlations for pairs with enough overlap.
-Null for B and C: circularly shift one series by a random offset (>= 7 days), 500 times; a
+Before B and C, every daily series has its weekday means and its 30-day centred rolling mean
+removed, so shared weekly schedules (GCP Mondays, quiet weekends) and slow shared regime changes
+don't count as providers moving together. Correlations are Spearman (rank), so one shared shock
+day can't drive them.
+Null for B and C: circularly shift one series by a random whole number of weeks, 500 times; a
 correlation is called significant if |corr| exceeds the 95th percentile of shifted |corr|.
-Circular shifts keep each series' own autocorrelation and weekly patterns, so batch schedules
-don't produce false positives.
+Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-20)
+come via common.py.
 """
 import itertools
 import os
@@ -24,7 +28,7 @@ import numpy as np
 import pandas as pd
 from matplotlib.colors import LinearSegmentedColormap
 
-from common import EPS, INK, OUT, load_returns
+from common import EPS, INK, OUT, dedupe_paths, load_returns
 
 N_SHIFT = 500
 MIN_OVERLAP = 100
@@ -32,8 +36,8 @@ rng = np.random.default_rng(2)
 
 R, meta, days = load_returns()
 spot = meta.index[meta.is_spot & (meta.provider != "vastai")]
-R = R[spot]
-meta = meta.loc[spot]
+R = dedupe_paths(R[spot])
+meta = meta.loc[R.columns]
 chg = (R.abs() > EPS).astype(float).where(R.notna())  # 1 = changed, 0 = didn't, NaN = no data
 
 # ------------------------------------------------------------------ A. within-provider sync
@@ -65,7 +69,15 @@ shock.to_csv(os.path.join(OUT, "sync_shared_shock_days.csv"))
 
 # Cross-provider tests need a provider that actually reprices: >= 10 days with any change.
 active = within.index[within.days_with_any_change >= 10]
-act, dirn = act[active], dirn[active]
+
+
+def deseason(s):
+    """Remove weekday means, then the 31-day centred rolling mean."""
+    s = s - s.groupby(s.index.dayofweek).transform("mean")
+    return s - s.rolling(31, center=True, min_periods=10).mean()
+
+
+act, dirn = act[active].apply(deseason), dirn[active].apply(deseason)
 
 
 # ------------------------------------------------------------------ B/C helpers
@@ -85,7 +97,7 @@ def shift_null(x, y, lag):
     yv = y.to_numpy()
     T = len(yv)
     out = []
-    for s in rng.integers(7, T - 7, N_SHIFT):
+    for s in 7 * rng.integers(1, T // 7, N_SHIFT):  # whole weeks, so weekday alignment is kept
         c, _ = corr_lag(x, pd.Series(np.roll(yv, s), index=y.index), lag)
         out.append(abs(c))
     return np.nanpercentile(out, 95)
@@ -120,7 +132,7 @@ for gpu in ["H100", "H200", "B200", "B300", "A100", "L40S", "L4", "T4", "V100", 
     for prov, pids in meta.loc[ids].groupby("provider").groups.items():
         s = R[pids].mean(1)
         if s.notna().sum() >= MIN_OVERLAP and (s.abs() > EPS).mean() >= 0.05:
-            per_prov[prov] = s
+            per_prov[prov] = deseason(s)
     if len(per_prov) >= 2:
         chip_rows.append(pairwise(pd.DataFrame(per_prov), gpu))
 chip = pd.concat(chip_rows, ignore_index=True) if chip_rows else pd.DataFrame()

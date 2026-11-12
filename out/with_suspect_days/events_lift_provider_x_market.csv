@@ -1,0 +1,6 @@
+,listings,p_change,p_change_after_change,p_change_after_no_change,lift_lag1,null_p025,null_p975,events,clusters
+nebius_pre_oct20 spot,6,0.0659,0.8226,0.0168,49.0978,31.5066,44.5378,67.0,yes
+verda on-demand,27,0.2121,0.7179,0.0783,9.1646,6.9608,7.8748,1082.0,yes
+aws spot,510,0.7567,0.9644,0.123,7.8428,2.0134,2.0585,80647.0,yes
+verda spot,24,0.2252,0.6928,0.0914,7.5834,5.9519,6.7044,1008.0,yes
+gcp spot,837,0.0874,0.0482,0.0913,0.5278,0.5388,0.5799,15183.0,repels

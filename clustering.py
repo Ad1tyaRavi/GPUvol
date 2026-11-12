@@ -9,8 +9,11 @@ Run on the two sets of series that move often enough for this to mean anything:
 
 Gaps: returns sit on a calendar-day grid, so a return exists only when both days have a price,
 and autocorrelations use only pairs where both lagged values exist.
-Null baseline: shuffle each series' returns over its own observed days (keeps the gaps and the
-return distribution, destroys any time ordering) and recompute.
+Null baseline: shuffle each series' returns only among days with the same weekday inside the same
+30-day block (keeps gaps, the return distribution, weekly schedules and slow regime changes;
+destroys short-horizon timing) and recompute. Ljung-Box is reported both with textbook p-values
+and against this null (per-series 95th percentile of shuffled Q(10)).
+Data-hygiene fixes from audit.py (duplicate paths, suspect days, Nebius split) come via common.py.
 Outputs go to ./out.
 """
 import os
@@ -21,7 +24,7 @@ import pandas as pd
 from scipy.stats import chi2
 
 from common import (BLUE, GRID, MUTED, ORANGE, OUT, aws_spot_active, ar_filter, load_returns,
-                    shuffle_cols, spot_chained_indexes)
+                    shuffle_cols_blocked, spot_chained_indexes)
 
 LAGS = 20
 LB_LAGS = 10       # Ljung-Box Q(10)
@@ -63,13 +66,21 @@ def analyse(R, label):
         rho, n = acf(Z)
         q, p = ljung_box(rho, n)
         res[name] = dict(rho=rho, n=n, q=q, p=p)
-    null_med = np.array([np.nanmedian(acf(np.abs(shuffle_cols(X, rng)))[0], axis=1) for _ in range(N_SHUFFLE)])
+    # Null: shuffle within weekday x 30-day blocks (keeps weekly schedules and regime shifts).
+    null_med, null_q = [], []
+    for _ in range(N_SHUFFLE):
+        rho0, n0 = acf(np.abs(shuffle_cols_blocked(X, rng, R.index)))
+        null_med.append(np.nanmedian(rho0, axis=1))
+        null_q.append(ljung_box(rho0, n0)[0])
+    null_med = np.array(null_med)
+    q_crit = np.nanpercentile(np.array(null_q), 95, axis=0)  # per-series calibrated Q(10) threshold
     per_series = pd.DataFrame({
         "n_returns": res["r"]["n"],
         "chg_freq": (np.abs(np.nan_to_num(X)) > 1e-9).sum(0) / res["r"]["n"],
         "acf1_r": res["r"]["rho"][0], "acf1_abs_r": res["abs_r"]["rho"][0],
         "acf1_r2": res["r2"]["rho"][0],
         "lb10_p_r": res["r"]["p"], "lb10_p_abs_r": res["abs_r"]["p"], "lb10_p_r2": res["r2"]["p"],
+        "lb10_abs_r_beats_null": res["abs_r"]["q"] > q_crit,
     }, index=R.columns)
     curve = pd.DataFrame({
         "lag": np.arange(1, LAGS + 1),
@@ -84,6 +95,7 @@ def analyse(R, label):
         "share_LB10_sig_r": (per_series.lb10_p_r < 0.05).mean(),
         "share_LB10_sig_abs_r": (per_series.lb10_p_abs_r < 0.05).mean(),
         "share_LB10_sig_r2": (per_series.lb10_p_r2 < 0.05).mean(),
+        "share_abs_r_beats_blocked_null": per_series.lb10_abs_r_beats_null.mean(),
         "median_acf1_r": per_series.acf1_r.median(),
         "median_acf1_abs_r": per_series.acf1_abs_r.median(),
         "null_median_acf1_abs_r_p95": curve.null_abs_r_p95.iloc[0],

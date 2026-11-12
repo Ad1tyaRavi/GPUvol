@@ -1,0 +1,15 @@
+group,changes,share_tiny_<0.1%,share_reversed_within_7d
+nebius spot,622,0.003,0.215
+cloudrift on-demand,47,0.0,0.085
+lium spot,133,0.0,0.06
+lium on-demand,215,0.0,0.06
+vastai spot,2224,0.084,0.024
+vastai on-demand,3492,0.154,0.015
+aws spot,88529,0.083,0.01
+azure spot,959,0.0,0.006
+verda on-demand,5268,0.0,0.002
+verda spot,5526,0.0,0.002
+gcp spot,37330,0.01,0.001
+gcp on-demand,54,0.0,0.0
+runpod on-demand,68,0.0,0.0
+nebius on-demand,30,0.0,0.0

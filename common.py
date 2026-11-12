@@ -10,8 +10,22 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
 CACHE = os.path.join(HERE, "data", "daily_returns_cache.pkl")
+
+# --- data-hygiene settings (see audit.py) ------------------------------------------------------
+# Days that look like scraper/catalog changes rather than market moves: 2026-05-25 (RunPod swapped
+# 150 of 192 listings; 4 providers shocked at once), 2026-07-23 (AWS spot median +10.6% on a day it
+# normally moves +-0.3%, 60 new AWS listings, GCP repriced on a Thursday outside its Monday batch).
+# Returns on these days and the day after are dropped. Set GPUVOL_KEEP_SUSPECT=1 to keep them;
+# outputs then go to out/with_suspect_days/ for a sensitivity comparison.
+SUSPECT_DAYS = pd.to_datetime(["2026-05-25", "2026-07-23"])
+KEEP_SUSPECT = os.environ.get("GPUVOL_KEEP_SUSPECT") == "1"
+# Nebius spot switched from near-static to daily dynamic pricing on this day; the two regimes are
+# split into separate series so a regime switch can't pass as clustering.
+NEBIUS_REGIME_START = pd.Timestamp("2026-10-20")
+POST_OFFSET = 10_000_000  # series-id offset for the post-switch Nebius series
+
+OUT = os.path.join(HERE, "out", "with_suspect_days") if KEEP_SUSPECT else os.path.join(HERE, "out")
 os.makedirs(OUT, exist_ok=True)
 
 BLUE, ORANGE, INK, MUTED, GRID = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e", "#e6e5e0"
@@ -26,7 +40,7 @@ KEY = ["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count"
 EPS = 1e-9  # |log return| above this counts as a price change
 
 
-def load_returns():
+def load_returns(clean=True):
     """Daily log-return grid for every listing (same cleaning as analysis.py).
 
     Returns (R, meta, days):
@@ -34,7 +48,44 @@ def load_returns():
            previous calendar day have a price, so gaps never get bridged.
       meta DataFrame of KEY columns per series id.
     Log returns are scale-free, so $/instance vs $/GPU (and the fractional-GPU fix) doesn't matter.
+    clean=True applies the audit fixes: drop suspect days, split Nebius at its regime switch.
     """
+    R, meta, days = _load_raw_returns()
+    if clean:
+        R, meta = clean_returns(R, meta)
+    return R, meta, days
+
+
+def clean_returns(R, meta):
+    R = R.copy()
+    if not KEEP_SUSPECT:
+        bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
+        R.loc[R.index.intersection(bad)] = np.nan
+    nb = meta.index[meta.provider == "nebius"]
+    before = R.index < NEBIUS_REGIME_START
+    post = R[nb].copy()
+    post.loc[before] = np.nan
+    post.columns = post.columns + POST_OFFSET
+    R.loc[~before, nb] = np.nan
+    meta = meta.copy()
+    meta_post = meta.loc[nb].copy()
+    meta_post.index = meta_post.index + POST_OFFSET
+    meta.loc[nb, "provider"] = "nebius_pre_oct20"
+    meta_post["provider"] = "nebius_post_oct20"
+    return pd.concat([R, post], axis=1), pd.concat([meta, meta_post])
+
+
+def dedupe_paths(R):
+    """Keep one column per identical return path (same changes on the same days, same gaps).
+    GCP and Verda set one price for many regions/node sizes; counting each copy as a separate
+    series inflates 'share of series significant' and listing-weighted averages."""
+    if R.shape[1] < 2:
+        return R
+    sig = R.round(6).fillna(9.0).T.apply(lambda row: hash(row.to_numpy().tobytes()), axis=1)
+    return R.loc[:, ~sig.duplicated().to_numpy()]
+
+
+def _load_raw_returns():
     if os.path.exists(CACHE):
         return pd.read_pickle(CACHE)
     df = pd.read_parquet(os.path.join(HERE, "all.parquet"))
@@ -61,6 +112,20 @@ def shuffle_cols(X, rng):
     rand_first = np.argsort(np.where(np.isnan(X), np.inf, rng.random(X.shape)), axis=0)  # observed, shuffled
     Y = np.full_like(X, np.nan)
     np.put_along_axis(Y, obs_first, np.take_along_axis(X, rand_first, axis=0), axis=0)
+    return Y
+
+
+def shuffle_cols_blocked(X, rng, index, block_days=30):
+    """Stricter null: shuffle each column only among days with the same weekday inside the same
+    30-day block. Keeps weekly schedules (GCP Monday batches, Verda's quiet weekends) and slow
+    regime changes in the null, so only short-horizon timing within a month counts as clustering."""
+    X = np.asarray(X, dtype=float)
+    Y = np.full_like(X, np.nan)
+    idx = pd.DatetimeIndex(index)
+    grp = idx.dayofweek.to_numpy() + 7 * ((idx - idx[0]).days.to_numpy() // block_days)
+    for g in np.unique(grp):
+        rows = np.where(grp == g)[0]
+        Y[rows] = shuffle_cols(X[rows], rng)
     return Y
 
 
@@ -101,11 +166,14 @@ def aws_spot_active(R, meta, min_obs=100, min_move=0.3):
     ids = meta.index[(meta.provider == "aws") & meta.is_spot]
     Ra = R[ids]
     n = Ra.notna().sum()
-    return Ra.loc[:, (n >= min_obs) & ((Ra.abs() > EPS).sum() / n >= min_move)]
+    return dedupe_paths(Ra.loc[:, (n >= min_obs) & ((Ra.abs() > EPS).sum() / n >= min_move)])
 
 
 def spot_chained_indexes(R, meta, min_days=150, min_move=0.1):
-    """Per-GPU spot matched-listing index returns (mean same-listing return, >=3 listings, no Vast.ai)."""
+    """Per-GPU spot matched-listing index returns (mean same-listing return, >=3 listings, no Vast.ai).
+    Duplicate price paths are collapsed first so one region-wide price isn't counted many times."""
+    ids = meta.index[meta.is_spot & (meta.provider != "vastai")]
+    R = dedupe_paths(R[ids])
     long = R.stack().rename("r").reset_index()
     long.columns = ["day", "sid", "r"]
     long = long.join(meta, on="sid")

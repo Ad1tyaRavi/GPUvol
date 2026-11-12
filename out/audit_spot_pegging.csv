@@ -1,0 +1,10 @@
+provider,pairs,share_constant_ratio,median_ratio
+daytona,56,1.0,0.576
+oci,176,1.0,0.5
+azure,628,0.518,0.185
+nebius,36,0.333,0.528
+runpod,101,0.129,0.857
+gcp,2291,0.033,0.417
+verda,177,0.017,0.35
+aws,596,0.003,0.326
+vastai,16,0.0,0.974
