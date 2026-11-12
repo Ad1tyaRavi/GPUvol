@@ -5,28 +5,18 @@ Two levels of analysis:
      Prices are sticky, so volatility = how often a price changes x how big the jump is.
   2. Index level: per (provider, gpu_type, spot) daily median $/GPU-hr. This handles
      marketplaces (Vast.ai) whose listing IDs churn every day.
-Outputs go to ./out (CSV tables + PNG charts).
+Same data-hygiene fixes as the clustering scripts (see audit.py / common.py): Nebius split at its
+2026-10-20 regime switch, suspect days dropped, identical listing return paths collapsed.
+Outputs go to ./out (CSV tables + PNG charts), or out/with_suspect_days/ if GPUVOL_KEEP_SUSPECT=1.
 """
 import os
 
-import matplotlib
-
-matplotlib.use("Agg")
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-HERE = os.path.dirname(os.path.abspath(__file__))
-OUT = os.path.join(HERE, "out")
-os.makedirs(OUT, exist_ok=True)
-
-BLUE, ORANGE, INK, MUTED, GRID = "#2a78d6", "#eb6834", "#0b0b0b", "#52514e", "#e6e5e0"
-plt.rcParams.update({
-    "figure.facecolor": "#fcfcfb", "axes.facecolor": "#fcfcfb", "axes.edgecolor": GRID,
-    "axes.labelcolor": MUTED, "xtick.color": MUTED, "ytick.color": MUTED, "text.color": INK,
-    "axes.grid": True, "grid.color": GRID, "grid.linewidth": 0.8, "axes.axisbelow": True,
-    "axes.spines.top": False, "axes.spines.right": False, "font.size": 10,
-})
+from common import (BLUE, HERE, INK, KEEP_SUSPECT, MUTED, NEBIUS_REGIME_START, ORANGE, OUT,
+                    SUSPECT_DAYS, dedupe_paths)
 
 MIN_OBS = 30  # min daily returns for a series to count
 
@@ -54,6 +44,13 @@ df["ppg"] = df.price_per_hour / df.eff_gpus  # $ per (full) GPU-hour
 df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
 df["market"] = np.where(df.is_spot, "spot", "on-demand")
 df["region_group"] = df.region_group.fillna("Unknown")
+# Nebius: static spot pricing until 2026-10-20, daily dynamic after. Treat as two providers.
+nb = df.provider == "nebius"
+df.loc[nb, "provider"] = np.where(df.loc[nb, "day"] < NEBIUS_REGIME_START, "nebius_pre_oct20", "nebius_post_oct20")
+# Suspect days (likely scraper/catalog changes): dropping the rows also drops the next day's return,
+# because returns require consecutive days.
+if not KEEP_SUSPECT:
+    df = df[~df.day.isin(SUSPECT_DAYS)]
 
 TIER = {  # rough generation / segment buckets
     **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
@@ -81,6 +78,12 @@ g = daily.groupby(key, dropna=False, sort=False)
 daily["gap"] = g.day.diff().dt.days
 daily["r"] = np.log(daily.ppg / g.ppg.shift())
 r = daily[daily.gap == 1].dropna(subset=["r"])  # consecutive-day returns only
+
+# Collapse listings with identical return paths (GCP/Verda set one price for many regions/sizes),
+# so one price decision isn't counted many times in the axis tables or the matched index.
+r["sid"] = r.groupby(key, dropna=False).ngroup()
+keep_sids = dedupe_paths(r.pivot(index="day", columns="sid", values="r")).columns
+r = r[r.sid.isin(keep_sids)]
 
 ser = (r.groupby(key, dropna=False)
        .agg(n=("r", "size"), vol=("r", "std"), chg_freq=("r", lambda x: (x.abs() > 1e-9).mean()),

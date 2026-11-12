@@ -78,11 +78,14 @@ def clean_returns(R, meta):
 def dedupe_paths(R):
     """Keep one column per identical return path (same changes on the same days, same gaps).
     GCP and Verda set one price for many regions/node sizes; counting each copy as a separate
-    series inflates 'share of series significant' and listing-weighted averages."""
+    series inflates 'share of series significant' and listing-weighted averages.
+    Only listings that changed at least once are collapsed: listings that never move all share the
+    same all-zero path, but a fixed price is a real property of each product, not a copied decision."""
     if R.shape[1] < 2:
         return R
+    moves = (R.abs() > EPS).any().to_numpy()
     sig = R.round(6).fillna(9.0).T.apply(lambda row: hash(row.to_numpy().tobytes()), axis=1)
-    return R.loc[:, ~sig.duplicated().to_numpy()]
+    return R.loc[:, ~(sig.duplicated().to_numpy() & moves)]
 
 
 def _load_raw_returns():

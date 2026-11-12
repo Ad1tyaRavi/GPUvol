@@ -9,8 +9,9 @@ scraped 1-3 times a day from January to November 2026. About 3.7M GPU listing ro
 
 ## Findings
 
-**Spot moves, on-demand doesn't.** Spot prices change on about 17% of days, on-demand on less
-than 1%. Over the year H100 spot roughly doubled while on-demand B200 and H200 rose 7-12%.
+**Spot moves, on-demand doesn't.** Spot prices change on about 20% of days, on-demand on well
+under 1%. From January to November, spot H100 rose ~40%, B200 ~45% and L40S ~60%, while
+on-demand prices for the same chips moved 0-8%.
 
 **Every provider has its own pricing machine.** AWS nudges spot prices almost daily in ~1.5%
 steps. GCP reprices in batches on Mondays. Verda is the only one with dynamic on-demand prices,
@@ -22,13 +23,13 @@ next week or two (about 11x vs 2x by chance). It's strongest for Hopper and Blac
 clustering is in many small moves rather than big jumps, so GARCH only picks up a weak version
 of it.
 
-**AWS spot prices trend.** Day-to-day returns are autocorrelated (~0.26 at lag 1), which you
-wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing removes it.
+**AWS spot prices trend.** Day-to-day returns are strongly autocorrelated (~0.5 at lag 1), which
+you wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing removes it.
 
 **Providers reprice alone.** Within a provider, listings change together (pairwise correlation
 0.70-0.92). Across providers there's no more co-movement than chance, even for the same chip.
 
-**Same chip, very different prices.** On a typical day the priciest A100 is ~7.8x the cheapest,
+**Same chip, very different prices.** On a typical day the priciest A100 is ~6.6x the cheapest,
 H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.
 
 **Other axes matter less.** GPU tier, region and node size differences mostly reflect which
@@ -39,11 +40,12 @@ per GPU.
 
 Several early results turned out to be artifacts, caught by `audit.py`:
 
+- The first price index said H100 spot had doubled. GCP lists one price under many regions, so
+  it was counted many times; fixing that gave ~+60%, and dropping one odd day (2026-07-23) ~+40%.
 - Clustering in the H200/B200 indexes and in Nebius was weekly schedules and Nebius's October
   regime switch.
 - Cross-provider links came from one or two odd days, mainly 2026-07-23, when AWS spot jumped
   ~10% across the board and GCP repriced off-schedule. Those days are excluded.
-- GCP and Verda list one price under many regions, so their listings were double counted.
 - The textbook GARCH likelihood-ratio test flagged ~30% of *shuffled* series. Significance is
   calibrated against shuffled data instead.
 
@@ -55,6 +57,8 @@ Several early results turned out to be artifacts, caught by `audit.py`:
   flat and then jump.
 - Trends use a matched-listing index (only listings present on both days), so listings coming
   and going don't move it.
+- Listings that move in lockstep (one price copied across regions or node sizes) are counted
+  once. Listings that never move are all kept.
 - Clustering tests are compared against shuffles within the same weekday and 30-day block, so
   weekly schedules and slow regime changes don't count.
 - AR filter, Ljung-Box and GARCH(1,1) are written out by hand (numpy/scipy) to handle missing
@@ -63,8 +67,8 @@ Several early results turned out to be artifacts, caught by `audit.py`:
 ## Caveats
 
 List prices only: no transactions, volumes or reserved contracts. About 230 days, all in a
-rising market. Listings are equally weighted, so AWS and GCP dominate. `analysis.py` predates the
-audit fixes, so its trend numbers (e.g. H100 spot +96%) include 2026-07-23 and GCP duplicates.
+rising market. Listings are equally weighted, so AWS and GCP dominate. Whether 2026-07-23 was a
+real market move is unknown; with it kept, spot trends are higher (H100 ~+60%).
 
 ## Files
 

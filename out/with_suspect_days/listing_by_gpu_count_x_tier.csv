@@ -1,0 +1,50 @@
+tier,gpu_count_bucket,series,median_ann_vol,p90_ann_vol,pct_series_ever_change,mean_daily_change_freq,median_jump
+Ada DC,fractional,0,,,,,
+Ada DC,1,657,0.0,0.7175,0.3562,0.1686,0.0255
+Ada DC,2,48,0.0,0.0,0.0208,0.0033,0.01
+Ada DC,4,244,0.0,0.7494,0.1885,0.137,0.0171
+Ada DC,8,97,0.0,1.0108,0.2371,0.1668,0.0184
+Ada DC,16+,0,,,,,
+Ada DC,other,0,,,,,
+Ampere DC,fractional,285,0.0,0.0,0.0667,0.0005,0.0784
+Ampere DC,1,518,0.0,0.5232,0.2143,0.1121,0.0174
+Ampere DC,2,216,0.0,0.0,0.0787,0.0038,0.0955
+Ampere DC,4,206,0.0,0.5116,0.1893,0.0942,0.0218
+Ampere DC,8,280,0.0,0.4971,0.1571,0.0784,0.0202
+Ampere DC,16+,13,0.0,0.2695,0.3077,0.0102,0.0513
+Ampere DC,other,1,0.0,0.0,0.0,0.0,
+Blackwell DC,fractional,0,,,,,
+Blackwell DC,1,33,0.0,1.0091,0.3939,0.0477,0.2133
+Blackwell DC,2,26,0.0,0.559,0.2308,0.0474,0.0099
+Blackwell DC,4,156,0.0,0.0,0.0256,0.0075,0.0099
+Blackwell DC,8,172,0.0,0.2998,0.186,0.066,0.0474
+Blackwell DC,16+,0,,,,,
+Blackwell DC,other,8,0.0,0.0,0.0,0.0,
+Hopper DC,fractional,0,,,,,
+Hopper DC,1,156,0.0,0.7129,0.4038,0.0591,0.0953
+Hopper DC,2,72,0.0,0.6303,0.2083,0.0133,0.2231
+Hopper DC,4,27,0.0,0.0,0.0741,0.0403,0.0099
+Hopper DC,8,379,0.0,0.3909,0.1847,0.0564,0.049
+Hopper DC,16+,0,,,,,
+Hopper DC,other,20,0.0,0.0,0.0,0.0,
+Legacy DC,fractional,0,,,,,
+Legacy DC,1,714,0.0,0.3939,0.2325,0.1029,0.021
+Legacy DC,2,183,0.0,0.0,0.0109,0.0018,0.0094
+Legacy DC,4,1980,0.0,0.3421,0.3616,0.0412,0.0434
+Legacy DC,8,541,0.0,0.3878,0.2274,0.05,0.0472
+Legacy DC,16+,0,,,,,
+Legacy DC,other,0,,,,,
+"Other (TPU, misc)",fractional,0,,,,,
+"Other (TPU, misc)",1,195,0.0,0.0,0.0154,0.0004,0.0679
+"Other (TPU, misc)",2,9,0.0,0.0,0.0,0.0,
+"Other (TPU, misc)",4,7,0.0,0.0,0.0,0.0,
+"Other (TPU, misc)",8,90,0.0,0.0,0.0,0.0,
+"Other (TPU, misc)",16+,0,,,,,
+"Other (TPU, misc)",other,8,0.0,0.0,0.0,0.0,
+Workstation/consumer,fractional,186,0.0,0.3057,0.3065,0.0333,0.0351
+Workstation/consumer,1,433,0.0,0.7368,0.4018,0.1041,0.0269
+Workstation/consumer,2,104,0.0,0.6865,0.1538,0.1117,0.0176
+Workstation/consumer,4,148,0.0,1.2902,0.3851,0.0809,0.0421
+Workstation/consumer,8,139,0.0,0.5965,0.1871,0.0769,0.0299
+Workstation/consumer,16+,0,,,,,
+Workstation/consumer,other,48,0.0,0.0,0.0,0.0,
