@@ -99,30 +99,7 @@ fig.suptitle("Spot prices climbed through 2026; on-demand barely moved", x=0.01,
 fig.tight_layout()
 save(fig, "spot_vs_ondemand_index.png")
 
-# ------------------------------------------------------------------ 3. how often each provider reprices
-t = pd.read_csv(os.path.join(OUTD, "listing_by_provider_x_market.csv"))
-t = t[~t.provider.isin(["vastai", "nebius_dynamic"])]  # Vast.ai: sampling noise (excluded everywhere)
-t["provider"] = t.provider.replace({"nebius_static": "nebius*", "lambdalabs": "lambda"})
-pm = t.pivot(index="provider", columns="market", values="mean_daily_change_freq").fillna(0)
-pm = pm.loc[pm.max(axis=1).sort_values().index]
-fig, ax = plt.subplots(figsize=(7.5, 0.4 * len(pm) + 1.3))
-y = np.arange(len(pm))
-ax.barh(y - 0.2, pm["on-demand"], height=0.36, color=BLUE, label="on-demand")
-ax.barh(y + 0.2, pm["spot"], height=0.36, color=ORANGE, label="spot")
-for yi, (od, sp) in enumerate(zip(pm["on-demand"], pm["spot"])):
-    if max(od, sp) < 0.0005:
-        ax.text(0.005, yi, "never changes", va="center", fontsize=8, color=MUTED)
-ax.set_yticks(y, pm.index)
-ax.xaxis.set_major_formatter(plt.matplotlib.ticker.PercentFormatter(1.0))
-ax.set_xlabel("share of days a listing's price changes")
-ax.legend(frameon=False, loc="lower right")
-ax.grid(axis="y", visible=False)
-ax.set_title("How often each provider changes its prices", loc="left", fontsize=12)
-ax.text(0, -0.13 - 0.3 / len(pm), "*Nebius before its 8 Oct 2026 switch to dynamic spot pricing",
-        transform=ax.transAxes, fontsize=8, color=MUTED, va="top")
-save(fig, "change_frequency.png")
-
-# ------------------------------------------------------------------ 4. AWS bursts decay
+# ------------------------------------------------------------------ 3. AWS bursts decay
 lift = pd.read_csv(os.path.join(OUTD, "events_lift_by_lag.csv"), index_col="lag")["aws spot"]
 null = pd.read_csv(os.path.join(OUTD, "events_lift_by_lag_null.csv"))
 null = null[null.group == "aws spot"].set_index("lag")

@@ -15,9 +15,7 @@ Nebius was static until 8 Oct 2026, then switched to daily dynamic pricing.
 
 ![Four providers, four pricing styles](docs/img/pricing_styles.png)
 
-OCI, Lambda and Vultr don't move at all:
-
-![How often each provider changes prices](docs/img/change_frequency.png)
+OCI, Lambda and Vultr don't move at all.
 
 **Spot moves, on-demand doesn't.** From January to November, spot H100 rose ~40% and B200 and
 L40S ~55%, while on-demand prices for the same chips barely moved.
