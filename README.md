@@ -21,8 +21,7 @@ big moves. It holds out of sample: fit through August and tested on September to
 gives 1.33x and 61%.
 
 Daily changes have an autocorrelation of about 0.5 at lag 1. It fades out by day 5, then goes
-slightly negative for a few weeks. In a normal market this would get traded away, but you can't
-arbitrage GPU-hours, and AWS adjusts spot prices gradually on purpose.
+slightly negative for a few weeks.
 
 ![AWS spot momentum](docs/img/aws_momentum.png)
 
