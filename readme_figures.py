@@ -9,7 +9,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import BLUE, GRID, HERE, INK, MUTED, ORANGE, SUSPECT_DAYS, NEBIUS_REGIME_START
+from common import (BLUE, GRID, HERE, INK, MUTED, NEBIUS_REGIME_START, ORANGE, STALE_END, STALE_PROVIDERS,
+                    STALE_START, SUSPECT_DAYS, stale_rows)
+
+STALE_COLOR = "#ece6dc"  # AWS/GCP stale-feed window, drawn as missing data
 
 IMG = os.path.join(HERE, "docs", "img")
 OUTD = os.path.join(HERE, "out")
@@ -36,7 +39,7 @@ raw = pd.read_parquet(os.path.join(HERE, "all.parquet"),
                                "timestamp", "quality"])
 raw = raw[(raw.quality == "ok") & (raw.gpu_count > 0) & (raw.price_per_hour > 0)]
 raw["day"] = raw.timestamp.dt.tz_convert(None).dt.normalize()
-raw = raw[~raw.day.isin(SUSPECT_DAYS)]
+raw = raw[~raw.day.isin(SUSPECT_DAYS) & ~stale_rows(raw.provider, raw.day)]
 
 # Stretches of 3+ days with no snapshots at all (e.g. 2026-03-10 to 2026-05-07): shaded, line broken.
 all_days = pd.date_range(raw.day.min(), raw.day.max(), freq="D")
@@ -52,6 +55,8 @@ for i, (ax, (prov, inst, reg, spot, title)) in enumerate(zip(axes.flat, PICKS)):
     full = price.reindex(pd.date_range(price.index.min(), price.index.max(), freq="D")).ffill(limit=2)
     for _, g in gaps.iterrows():
         ax.axvspan(g["min"], g["max"], color=GRID, lw=0, label="no data" if i == 0 and _ == gaps.index[0] else None)
+    if prov in STALE_PROVIDERS:
+        ax.axvspan(STALE_START, STALE_END, color=STALE_COLOR, lw=0, label="stale feed" if i == 0 else None)
     ax.plot(full.index, full.values, drawstyle="steps-post", color=BLUE, lw=1.6)
     chg = price[price.diff().abs() > 1e-9]
     sub = f"price changed on {len(chg)} of {len(price)} days"
@@ -77,6 +82,7 @@ chain = chain[chain.market == "spot"]
 fig, ax = plt.subplots(figsize=(9, 4.4))
 for _, g in gaps.iterrows():
     ax.axvspan(g["min"], g["max"], color=GRID, lw=0, label="no data" if _ == gaps.index[0] else None)
+ax.axvspan(STALE_START, STALE_END, color=STALE_COLOR, lw=0, label="AWS/GCP feed stale")
 ends = {}
 for gpu, c in GPU_COLORS.items():
     s = chain[chain.gpu_type == gpu]
@@ -114,7 +120,7 @@ ax.legend(frameon=False, fontsize=8)
 ax.grid(axis="x", visible=False)
 ax.set_title("AWS spot: one price change makes more changes likely for about two weeks", loc="left",
              fontsize=12, pad=16)
-ax.text(0, 1.02, "chance sits near 2x, not 1x, because some listings simply change more often than others",
+ax.text(0, 1.02, "chance sits at 2-3x, not 1x, because some listings simply change more often than others",
         transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
 save(fig, "aws_bursts.png")
 
@@ -128,6 +134,7 @@ from common import EPS, dedupe_paths, load_returns
 R, meta, days = load_returns(clean=False)  # Nebius kept whole so its switch is visible
 bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
 R.loc[R.index.intersection(bad)] = np.nan  # same suspect days as the analysis
+R.loc[STALE_START:STALE_END, meta.index[meta.provider.isin(STALE_PROVIDERS)]] = np.nan  # stale feed
 ROWS = 40
 blocks, labels = [], []
 for prov in ["aws", "gcp", "verda", "nebius", "azure"]:

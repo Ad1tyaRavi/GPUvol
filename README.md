@@ -23,7 +23,7 @@ year. Spot prices mostly rose, in steps, and not all the same way:
 ![Spot price index by chip](docs/img/spot_index.png)
 
 **AWS spot volatility clusters.** A price change makes another one far more likely over the
-next two weeks. It's strongest for Hopper and Blackwell chips. The clustering is in many small
+next two weeks. It's strongest for Hopper chips. The clustering is in many small
 moves rather than big jumps, so GARCH only picks up a weak version of it.
 
 ![AWS spot price changes come in bursts](docs/img/aws_bursts.png)
@@ -32,13 +32,13 @@ moves rather than big jumps, so GARCH only picks up a weak version of it.
 you wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing removes it.
 
 **Providers reprice alone.** Within a provider, listings change together (pairwise correlation
-0.70-0.92). Across providers the links are weak (correlations of 0.25 or less), even for the
+0.54-0.92). Across providers the links are weak (correlations of 0.26 or less), even for the
 same chip.
 
 ![Repricing raster](docs/img/repricing_raster.png)
 
 **Same chip, very different prices.** On a typical day the priciest A100 is ~6.6x the cheapest,
-H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.
+H100 ~4.5x, B200 ~2.6x. Older chips are priced much less consistently.
 
 **Other axes matter less.** GPU tier, region and node size differences mostly reflect which
 providers sell what. Most providers charge a flat per-GPU price; 16+ GPU nodes are 8-19% cheaper
@@ -62,14 +62,15 @@ per GPU.
 ## Data quirks
 
 FYI, `audit.py` checks for these: GCP reprices in Monday batches and copies one price across
-many regions, Nebius changed pricing systems on 2026-10-08, and two days (2026-05-25, 2026-07-23)
-look off and are excluded. The dataset has no snapshots from 2026-03-10 to 2026-05-07.
+many regions, and Nebius changed pricing systems on 2026-10-08. The AWS and GCP feeds froze from
+2026-06-25 to 2026-07-22 and caught up in one jump on 07-23; the frozen days are treated as
+missing, and the jump counts toward trends but not volatility. 2026-05-25 (a RunPod catalog
+swap) is excluded, and the dataset has no snapshots from 2026-03-10 to 2026-05-07.
 
 ## Caveats
 
 List prices only: no transactions, volumes or reserved contracts. About 230 days, all in a
-rising market. Listings are equally weighted, so AWS and GCP dominate. Whether 2026-07-23 was a
-real market move is unknown; with it kept, spot trends are higher (H100 ~+60%).
+rising market. Listings are equally weighted, so AWS and GCP dominate.
 
 ## Files
 

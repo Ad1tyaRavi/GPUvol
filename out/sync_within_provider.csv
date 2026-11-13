@@ -1,7 +1,7 @@
 provider,listings_per_day,mean_activity,implied_pairwise_corr,share_of_days_most_listings_change,share_of_changes_on_those_days,days_with_any_change
-verda,28.0,0.198,0.919,0.15,0.987,47
-gcp,974.0,0.068,0.82,0.06,1.0,18
-aws,524.0,0.748,0.695,0.591,0.998,179
+verda,28.0,0.197,0.92,0.15,0.987,47
+gcp,970.0,0.075,0.819,0.06,1.0,18
+aws,535.0,0.831,0.543,0.595,0.998,180
 runpod,44.0,0.004,0.49,0.0,0.0,1
 nebius_static,20.0,0.002,0.211,0.0,0.0,1
-azure,467.0,0.005,0.16,0.0,0.0,12
+azure,471.0,0.006,0.16,0.0,0.0,13

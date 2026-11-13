@@ -13,12 +13,19 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 CACHE = os.path.join(HERE, "data", "daily_returns_cache.pkl")
 
 # --- data-hygiene settings (see audit.py) ------------------------------------------------------
-# Days that look like scraper/catalog changes rather than market moves: 2026-05-25 (RunPod swapped
-# 150 of 192 listings; 4 providers shocked at once), 2026-07-23 (AWS spot median +10.6% on a day it
-# normally moves +-0.3%, 60 new AWS listings, GCP repriced on a Thursday outside its Monday batch).
-# Returns on these days and the day after are dropped. Set GPUVOL_KEEP_SUSPECT=1 to keep them;
-# outputs then go to out/with_suspect_days/ for a sensitivity comparison.
-SUSPECT_DAYS = pd.to_datetime(["2026-05-25", "2026-07-23"])
+# 2026-05-25 looks like a scraper/catalog change rather than a market move (RunPod swapped 150 of
+# 192 listings; 4 providers shocked at once). Returns on it and the day after are dropped.
+SUSPECT_DAYS = pd.to_datetime(["2026-05-25"])
+# Stale feed: every AWS spot listing made its last change on 2026-06-24 and nothing moved until
+# 2026-07-23, when 97% changed at once; GCP skipped all its Monday batches in the same window and
+# caught up on Thursday 2026-07-23. Other providers kept updating. The frozen days are treated as
+# missing. The 07-23 return then spans the whole gap: it is kept for price trends (it is where the
+# prices really went) but dropped for volatility/clustering (it is ~4 weeks of moves, not one day).
+STALE_PROVIDERS = ("aws", "gcp")
+STALE_START, STALE_END = pd.Timestamp("2026-06-25"), pd.Timestamp("2026-07-22")
+CATCHUP_DAY = pd.Timestamp("2026-07-23")
+# GPUVOL_KEEP_SUSPECT=1 skips the suspect-day and stale-feed fixes (raw data, for a sensitivity
+# comparison); outputs then go to out/with_suspect_days/.
 KEEP_SUSPECT = os.environ.get("GPUVOL_KEEP_SUSPECT") == "1"
 # Nebius spot switched from near-static to daily dynamic pricing on this day; the two regimes are
 # split into separate series so a regime switch can't pass as clustering.
@@ -40,7 +47,14 @@ KEY = ["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count"
 EPS = 1e-9  # |log return| above this counts as a price change
 
 
-def load_returns(clean=True):
+def stale_rows(provider, day):
+    """Boolean mask for snapshot rows inside the stale-feed window (provider/day Series)."""
+    if KEEP_SUSPECT:
+        return pd.Series(False, index=provider.index)
+    return provider.isin(STALE_PROVIDERS) & day.between(STALE_START, STALE_END)
+
+
+def load_returns(clean=True, keep_catchup=False):
     """Daily log-return grid for every listing (same cleaning as analysis.py).
 
     Returns (R, meta, days):
@@ -48,19 +62,24 @@ def load_returns(clean=True):
            previous calendar day have a price, so gaps never get bridged.
       meta DataFrame of KEY columns per series id.
     Log returns are scale-free, so $/instance vs $/GPU (and the fractional-GPU fix) doesn't matter.
-    clean=True applies the audit fixes: drop suspect days, split Nebius at its regime switch.
+    clean=True applies the audit fixes: drop suspect days, blank the stale-feed window, split Nebius
+    at its regime switch. keep_catchup=True keeps the 2026-07-23 catch-up return (for trends).
     """
     R, meta, days = _load_raw_returns()
     if clean:
-        R, meta = clean_returns(R, meta)
+        R, meta = clean_returns(R, meta, keep_catchup)
     return R, meta, days
 
 
-def clean_returns(R, meta):
+def clean_returns(R, meta, keep_catchup=False):
     R = R.copy()
     if not KEEP_SUSPECT:
         bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
         R.loc[R.index.intersection(bad)] = np.nan
+        stale = meta.index[meta.provider.isin(STALE_PROVIDERS)]
+        R.loc[STALE_START:STALE_END, stale] = np.nan
+        if not keep_catchup:
+            R.loc[CATCHUP_DAY, stale] = np.nan
     nb = meta.index[meta.provider == "nebius"]
     before = R.index < NEBIUS_REGIME_START
     post = R[nb].copy()

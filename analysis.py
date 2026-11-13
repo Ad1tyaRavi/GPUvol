@@ -15,8 +15,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import (BLUE, HERE, INK, KEEP_SUSPECT, MUTED, NEBIUS_REGIME_START, ORANGE, OUT,
-                    SUSPECT_DAYS, dedupe_paths)
+from common import (BLUE, CATCHUP_DAY, HERE, INK, KEEP_SUSPECT, MUTED, NEBIUS_REGIME_START, ORANGE, OUT,
+                    STALE_PROVIDERS, STALE_START, SUSPECT_DAYS, dedupe_paths, stale_rows)
 
 MIN_OBS = 30  # min daily returns for a series to count
 
@@ -51,6 +51,9 @@ df.loc[nb, "provider"] = np.where(df.loc[nb, "day"] < NEBIUS_REGIME_START, "nebi
 # because returns require consecutive days.
 if not KEEP_SUSPECT:
     df = df[~df.day.isin(SUSPECT_DAYS)]
+# Stale feed (AWS/GCP frozen 2026-06-25..07-22): those rows are dropped, so the 07-23 return has a
+# gap and drops out of the consecutive-day returns; it is added back only for the price trends.
+df = df[~stale_rows(df.provider, df.day)]
 
 TIER = {  # rough generation / segment buckets
     **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
@@ -77,13 +80,18 @@ daily = daily.sort_values(key + ["day"])
 g = daily.groupby(key, dropna=False, sort=False)
 daily["gap"] = g.day.diff().dt.days
 daily["r"] = np.log(daily.ppg / g.ppg.shift())
+daily["sid"] = daily.groupby(key, dropna=False).ngroup()
 r = daily[daily.gap == 1].dropna(subset=["r"])  # consecutive-day returns only
+# For trends only: also the 07-23 catch-up return that spans the stale window.
+catchup = (daily.provider.isin(STALE_PROVIDERS) & (daily.day == CATCHUP_DAY)
+           & (daily.day - pd.to_timedelta(daily.gap, unit="D") == STALE_START - pd.Timedelta(days=1)))
+r_trend = daily[(daily.gap == 1) | catchup].dropna(subset=["r"])
 
 # Collapse listings with identical return paths (GCP/Verda set one price for many regions/sizes),
 # so one price decision isn't counted many times in the axis tables or the matched index.
-r["sid"] = r.groupby(key, dropna=False).ngroup()
 keep_sids = dedupe_paths(r.pivot(index="day", columns="sid", values="r")).columns
 r = r[r.sid.isin(keep_sids)]
+r_trend = r_trend[r_trend.sid.isin(keep_sids)]
 
 ser = (r.groupby(key, dropna=False)
        .agg(n=("r", "size"), vol=("r", "std"), chg_freq=("r", lambda x: (x.abs() > 1e-9).mean()),
@@ -174,7 +182,7 @@ drift.to_csv(os.path.join(OUT, "flagship_monthly_drift.csv"))
 
 # Chained (matched-listing) index: each day's return = equal-weight mean of same-listing log
 # changes across listings seen on both days. Immune to listings entering/leaving the sample.
-rr = r[r.provider != "vastai"]
+rr = r_trend[r_trend.provider != "vastai"]  # trends include the 07-23 catch-up
 chain = rr.groupby(["gpu_type", "market", "day"]).r.agg(["mean", "size"]).reset_index()
 chain = chain[chain["size"] >= 3]
 chain_sum = (chain.groupby(["gpu_type", "market"])
