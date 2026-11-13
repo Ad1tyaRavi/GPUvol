@@ -1,0 +1,6 @@
+,value
+max_spot_over_on_demand,1.0
+share_days_at_ceiling,0.0203
+p_change_at_ceiling,0.0211
+p_change_below_ceiling,0.9407
+share_quiet_days_at_ceiling,0.2552

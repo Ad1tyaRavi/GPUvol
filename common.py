@@ -1,5 +1,6 @@
-"""Shared helpers for the clustering scripts: chart style, cleaned daily return grid, AR filter,
-fast within-series shuffle."""
+"""Shared helpers: chart style, raw loading with daily sampling, data-hygiene fixes, cleaned daily
+return grid, AR filter, fast within-series shuffle."""
+import glob
 import os
 
 import matplotlib
@@ -10,22 +11,37 @@ import numpy as np
 import pandas as pd
 
 HERE = os.path.dirname(os.path.abspath(__file__))
+SRC = os.path.join(HERE, "all.parquet")
 CACHE = os.path.join(HERE, "data", "daily_returns_cache.pkl")
 
+# --- daily sampling ----------------------------------------------------------------------------
+# The scraper runs 1-3 times a day at varying times (09:00 and 21:00 on a schedule, plus runs at
+# ~10:00-15:00). Taking the day's *last* snapshot made a "daily" return span anything from ~10h to
+# ~40h, and AWS spot changes far more often over the long ones. Each listing-day instead uses the
+# snapshot closest to 09:00 UTC (Jan-Mar snapshots were all ~09:20), so returns are ~24h apart.
+SAMPLE_HOUR_UTC = 9.0
+
 # --- data-hygiene settings (see audit.py) ------------------------------------------------------
-# 2026-05-25 looks like a scraper/catalog change rather than a market move (RunPod swapped 150 of
-# 192 listings; 4 providers shocked at once). Returns on it and the day after are dropped.
-SUSPECT_DAYS = pd.to_datetime(["2026-05-25"])
-# Stale feed: every AWS spot listing made its last change on 2026-06-24 and nothing moved until
-# 2026-07-23, when 97% changed at once; GCP skipped all its Monday batches in the same window and
-# caught up on Thursday 2026-07-23. Other providers kept updating. The frozen days are treated as
-# missing. The 07-23 return then spans the whole gap: it is kept for price trends (it is where the
-# prices really went) but dropped for volatility/clustering (it is ~4 weeks of moves, not one day).
-STALE_PROVIDERS = ("aws", "gcp")
-STALE_START, STALE_END = pd.Timestamp("2026-06-25"), pd.Timestamp("2026-07-22")
-CATCHUP_DAY = pd.Timestamp("2026-07-23")
-# GPUVOL_KEEP_SUSPECT=1 skips the suspect-day and stale-feed fixes (raw data, for a sensitivity
-# comparison); outputs then go to out/with_suspect_days/.
+# Stale feed: windows where a provider's prices are frozen copies of the last good scrape. Each is
+# (providers, first frozen day, last frozen day); providers=None means every provider except
+# STALE_EXEMPT. The day after a window is its catch-up day: the return then spans the whole window.
+# Frozen days are treated as missing; the catch-up return is kept for price trends (it is where
+# prices really went) but dropped for volatility/clustering (it is weeks of moves, not one day).
+#  * 2026-05-08..05-24: right after the dataset's two-month gap, no listing at any provider except
+#    Vast.ai changed on any snapshot (AWS spot normally changes on ~40% of snapshots); on 05-25 97%
+#    of AWS, 82% of GCP, 86% of Verda spot and every RunPod spot listing changed at once.
+#  * 2026-06-01: the day's only snapshot (14:54) is an exact copy of 05-31 21:00, Vast.ai aside.
+#  * 2026-06-25..07-22: every AWS spot listing made its last change on 06-24 and nothing moved until
+#    07-23, when 97% changed at once; GCP skipped all its Monday batches in the same window and
+#    caught up on Thursday 07-23. Other providers kept updating.
+STALE_EXEMPT = ("vastai",)
+STALE_WINDOWS = [
+    (None, pd.Timestamp("2026-05-08"), pd.Timestamp("2026-05-24")),
+    (None, pd.Timestamp("2026-06-01"), pd.Timestamp("2026-06-01")),
+    (("aws", "gcp"), pd.Timestamp("2026-06-25"), pd.Timestamp("2026-07-22")),
+]
+# GPUVOL_KEEP_SUSPECT=1 skips the stale-feed fixes (raw data, for a sensitivity comparison);
+# outputs then go to out/with_suspect_days/.
 KEEP_SUSPECT = os.environ.get("GPUVOL_KEEP_SUSPECT") == "1"
 # Nebius spot switched from near-static to daily dynamic pricing on this day; the two regimes are
 # split into separate series so a regime switch can't pass as clustering.
@@ -46,45 +62,111 @@ plt.rcParams.update({
 KEY = ["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count", "vcpus", "ram_gb"]
 EPS = 1e-9  # |log return| above this counts as a price change
 
+TIER = {  # rough generation / segment buckets
+    **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
+    **dict.fromkeys(["H100", "H200", "H100NVL", "H200NVL", "GH200", "H800"], "Hopper DC"),
+    **dict.fromkeys(["A100", "A800", "A10", "A10G", "A30", "A40", "A16"], "Ampere DC"),
+    **dict.fromkeys(["L4", "L40", "L40S"], "Ada DC"),
+    **dict.fromkeys(["V100", "P100", "P4", "T4", "K80", "M60"], "Legacy DC"),
+    **dict.fromkeys(["RTX4090", "RTX5090", "RTX3090", "RTX4080", "RTX5080", "A6000",
+                     "RTX6000Ada", "RTXPRO6000", "RTXPRO6000S", "RTXPRO4500", "A5000", "A4000"], "Workstation/consumer"),
+}
+TIER_OTHER = "Other (TPU, misc)"
+
+
+# ------------------------------------------------------------------ raw data
+def _snapshot_files():
+    return glob.glob(os.path.join(HERE, "data", "prices", "*", "*.parquet"))
+
+
+def _ensure_src():
+    """(Re)build all.parquet from data/prices/ when it is missing or older than any snapshot file."""
+    files = _snapshot_files()
+    if files and (not os.path.exists(SRC) or max(map(os.path.getmtime, files)) > os.path.getmtime(SRC)):
+        pd.concat([pd.read_parquet(f) for f in files], ignore_index=True).to_parquet(SRC)
+
+
+def load_raw(columns=None):
+    """All snapshot rows with the basic quality filters, plus a naive-UTC `day` column.
+    all.parquet is (re)built from data/prices/ when missing or older than any snapshot file."""
+    _ensure_src()
+    if columns is not None:
+        need = ["quality", "gpu_count", "price_per_hour", "gpu_type", "provider", "timestamp"]
+        columns = list(dict.fromkeys(list(columns) + need))
+    df = pd.read_parquet(SRC, columns=columns)
+    df = df[(df.quality == "ok") & (df.gpu_count > 0) & (df.price_per_hour > 0) & (df.gpu_type != "Unknown")
+            # DataCrunch rebranded to Verda; its May-Jul rows duplicate Verda's catalog.
+            & (df.provider != "datacrunch")].copy()
+    df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
+    return df
+
+
+def pick_daily(df, keys):
+    """One row per (keys, day): the snapshot closest to SAMPLE_HOUR_UTC (ties -> earlier)."""
+    hours = (df.timestamp.dt.tz_convert(None) - df.day).dt.total_seconds() / 3600
+    d = df.assign(_dist=(hours - SAMPLE_HOUR_UTC).abs(), _ts=df.timestamp)
+    d = d.sort_values(["_dist", "_ts"], kind="stable").drop_duplicates(keys + ["day"])
+    return d.drop(columns=["_dist", "_ts"])
+
 
 def stale_rows(provider, day):
-    """Boolean mask for snapshot rows inside the stale-feed window (provider/day Series)."""
+    """Boolean mask for rows inside a stale-feed window (provider/day Series)."""
+    mask = pd.Series(False, index=provider.index)
     if KEEP_SUSPECT:
-        return pd.Series(False, index=provider.index)
-    return provider.isin(STALE_PROVIDERS) & day.between(STALE_START, STALE_END)
+        return mask
+    for provs, start, end in STALE_WINDOWS:
+        p = ~provider.isin(STALE_EXEMPT) if provs is None else provider.isin(provs)
+        mask |= p & day.between(start, end)
+    return mask
 
 
+def stale_spans():
+    """(providers, start, end) for charts; providers=None means all but STALE_EXEMPT."""
+    return [] if KEEP_SUSPECT else STALE_WINDOWS
+
+
+# ------------------------------------------------------------------ return grid
 def load_returns(clean=True, keep_catchup=False):
-    """Daily log-return grid for every listing (same cleaning as analysis.py).
+    """Daily log-return grid for every listing (same sampling and cleaning as analysis.py).
 
     Returns (R, meta, days):
       R    DataFrame (calendar day x series id) of log returns; NaN unless both that day and the
            previous calendar day have a price, so gaps never get bridged.
       meta DataFrame of KEY columns per series id.
     Log returns are scale-free, so $/instance vs $/GPU (and the fractional-GPU fix) doesn't matter.
-    clean=True applies the audit fixes: drop suspect days, blank the stale-feed window, split Nebius
-    at its regime switch. keep_catchup=True keeps the 2026-07-23 catch-up return (for trends).
+    clean=True applies the audit fixes: blank the stale-feed windows, split Nebius at its regime
+    switch. keep_catchup=True keeps the catch-up return after each stale window (for trends).
     """
     R, meta, days = _load_raw_returns()
     if clean:
-        R, meta = clean_returns(R, meta, keep_catchup)
+        R = blank_stale(R, meta, keep_catchup)
+        R, meta = split_nebius(R, meta)
     return R, meta, days
 
 
-def clean_returns(R, meta, keep_catchup=False):
+def blank_stale(R, meta, keep_catchup=False):
+    """NaN out returns on frozen days (and, unless keep_catchup, the catch-up day after)."""
     R = R.copy()
-    if not KEEP_SUSPECT:
-        bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
-        R.loc[R.index.intersection(bad)] = np.nan
-        stale = meta.index[meta.provider.isin(STALE_PROVIDERS)]
-        R.loc[STALE_START:STALE_END, stale] = np.nan
+    if KEEP_SUSPECT:
+        return R
+    for provs, start, end in STALE_WINDOWS:
+        p = ~meta.provider.isin(STALE_EXEMPT) if provs is None else meta.provider.isin(provs)
+        cols = meta.index[p]
+        R.loc[start:end, cols] = np.nan
         if not keep_catchup:
-            R.loc[CATCHUP_DAY, stale] = np.nan
+            R.loc[end + pd.Timedelta(days=1):end + pd.Timedelta(days=1), cols] = np.nan
+    return R
+
+
+def split_nebius(R, meta):
+    """Nebius before/after its 2026-10-08 switch become separate series ('nebius_static' and
+    'nebius_dynamic'). The return on the switch day itself (old regime -> new) is dropped."""
     nb = meta.index[meta.provider == "nebius"]
     before = R.index < NEBIUS_REGIME_START
     post = R[nb].copy()
-    post.loc[before] = np.nan
+    post.loc[R.index <= NEBIUS_REGIME_START] = np.nan
     post.columns = post.columns + POST_OFFSET
+    R = R.copy()
     R.loc[~before, nb] = np.nan
     meta = meta.copy()
     meta_post = meta.loc[nb].copy()
@@ -108,24 +190,25 @@ def dedupe_paths(R):
 
 
 def _load_raw_returns():
+    _ensure_src()
+    sig = (os.path.getmtime(SRC), os.path.getsize(SRC), SAMPLE_HOUR_UTC)
     if os.path.exists(CACHE):
-        return pd.read_pickle(CACHE)
-    df = pd.read_parquet(os.path.join(HERE, "all.parquet"))
-    df = df[(df.quality == "ok") & (df.gpu_count > 0) & (df.price_per_hour > 0)
-            & (df.gpu_type != "Unknown") & (df.provider != "datacrunch")].copy()
-    df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
-    daily = (df.sort_values("timestamp").groupby(KEY + ["day"], dropna=False).price_per_hour.last()
-             .reset_index())
+        cached = pd.read_pickle(CACHE)
+        if len(cached) == 4 and cached[3] == sig:
+            return cached[:3]
+    df = load_raw(columns=KEY + ["price_per_hour", "timestamp", "quality"])
+    daily = pick_daily(df, KEY)[KEY + ["day", "price_per_hour"]]
     daily["sid"] = daily.groupby(KEY, dropna=False).ngroup()
     days = pd.date_range(daily.day.min(), daily.day.max(), freq="D")
     logp = np.log(daily.pivot(index="day", columns="sid", values="price_per_hour").reindex(days))
     R = logp.diff()
     meta = daily.drop_duplicates("sid").set_index("sid")[KEY]
     os.makedirs(os.path.dirname(CACHE), exist_ok=True)
-    pd.to_pickle((R, meta, days), CACHE)
+    pd.to_pickle((R, meta, days, sig), CACHE)
     return R, meta, days
 
 
+# ------------------------------------------------------------------ stats helpers
 def shuffle_cols(X, rng):
     """Permute each column's observed values among its own observed positions (NaNs stay put).
     Keeps the gaps and each series' value distribution; destroys time ordering."""
@@ -199,7 +282,6 @@ def spot_chained_indexes(R, meta, min_days=150, min_move=0.1):
     long = R.stack().rename("r").reset_index()
     long.columns = ["day", "sid", "r"]
     long = long.join(meta, on="sid")
-    long = long[(long.provider != "vastai") & long.is_spot]
     ch = long.groupby(["gpu_type", "day"]).r.agg(["mean", "size"])
     ch = ch[ch["size"] >= 3]["mean"].unstack("gpu_type").reindex(R.index)
     ch = ch.loc[:, ch.notna().sum() >= min_days]

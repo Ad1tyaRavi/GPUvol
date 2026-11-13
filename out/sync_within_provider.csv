@@ -1,7 +1,6 @@
-provider,listings_per_day,mean_activity,implied_pairwise_corr,share_of_days_most_listings_change,share_of_changes_on_those_days,days_with_any_change
-verda,28.0,0.197,0.92,0.15,0.987,47
-gcp,970.0,0.075,0.819,0.06,1.0,18
-aws,535.0,0.831,0.543,0.595,0.998,180
-runpod,44.0,0.004,0.49,0.0,0.0,1
-nebius_static,20.0,0.002,0.211,0.0,0.0,1
-azure,471.0,0.006,0.16,0.0,0.0,13
+provider,listings_per_day,mean_activity,implied_pairwise_corr,implied_pairwise_corr_deseasoned,share_of_days_most_listings_change,share_of_changes_on_those_days,days_with_any_change
+verda,28.0,0.207,0.913,0.29,0.143,0.982,47
+gcp,972.0,0.082,0.818,0.554,0.06,1.0,18
+runpod,40.0,0.004,0.489,0.45,0.0,0.0,1
+azure,478.0,0.006,0.144,0.135,0.0,0.0,13
+aws,541.0,0.924,0.012,-0.0,0.601,1.0,181

@@ -1,4 +1,4 @@
 provider_class,series,median_ann_vol,p90_ann_vol,pct_series_ever_change,mean_daily_change_freq,median_jump
-hyperscaler,7499,0.0,0.3938,0.2615,0.074,0.0365
-marketplace,123,0.0,0.5984,0.2114,0.0406,0.15
-neocloud,832,0.0,0.1322,0.1214,0.0311,0.01
+hyperscaler,7502,0.0,0.3985,0.2618,0.0743,0.0374
+marketplace,123,0.0,0.6416,0.2114,0.0407,0.15
+neocloud,832,0.0,0.1391,0.1214,0.0295,0.01

@@ -14,7 +14,7 @@ Null: shuffle each listing's event days only among days with the same weekday in
 30-day block (keeps its change rate, gaps, weekly schedule and slow regime shifts; destroys
 short-horizon timing) and recompute the pooled lift, 200 times -> 95% band. So GCP's Monday
 batches and Nebius's October switch to dynamic pricing can't pass as bursts.
-Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-08)
+Data-hygiene fixes (duplicate paths collapsed, stale-feed days dropped, Nebius split at 2026-10-08)
 come via common.py.
 """
 import os
@@ -23,22 +23,16 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import BLUE, EPS, GRID, INK, MUTED, ORANGE, OUT, dedupe_paths, load_returns, shuffle_cols_blocked
+from common import (BLUE, EPS, GRID, INK, MUTED, ORANGE, OUT, TIER, TIER_OTHER, dedupe_paths, load_returns,
+                    shuffle_cols_blocked)
 
-TIER = {
-    **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
-    **dict.fromkeys(["H100", "H200", "H100NVL", "H200NVL", "GH200", "H800"], "Hopper DC"),
-    **dict.fromkeys(["A100", "A800", "A10", "A10G", "A30", "A40", "A16"], "Ampere DC"),
-    **dict.fromkeys(["L4", "L40", "L40S"], "Ada DC"),
-    **dict.fromkeys(["V100", "P100", "P4", "T4", "K80", "M60"], "Legacy DC"),
-}
 MAX_LAG = 14
 N_SHUFFLE = 200
 rng = np.random.default_rng(1)
 
 R, meta, days = load_returns()
 meta = meta.assign(market=np.where(meta.is_spot, "spot", "on-demand"),
-                   tier=meta.gpu_type.map(TIER).fillna("Workstation/other"))
+                   tier=meta.gpu_type.map(TIER).fillna(TIER_OTHER))
 
 # Universe: listings with enough history and enough events to say anything about timing.
 n_obs = R.notna().sum()

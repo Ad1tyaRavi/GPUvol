@@ -4,8 +4,8 @@ Each check is read-only and writes a table to out/audit_*.csv. Nothing here chan
 it tells us which ones need a fix.
 
  A. Coverage gaps     - days a provider is missing, or only partly scraped (listing count collapses)
- B. Snapshot timing   - the "daily" price is the day's last snapshot, taken at varying times, so a
-                        daily return can span ~10h or ~40h. Does change frequency depend on that?
+ B. Snapshot timing   - the "daily" price is the snapshot closest to 09:00 UTC; how far apart are
+                        those picks, and does change frequency still depend on the interval?
  C. Intraday changes  - on days with 2+ snapshots, how often does a price differ within the day?
  D. Day-of-week       - scheduled repricing (e.g. GCP Mondays); chi-square test per provider/market
  E. Shared shock days - many providers changing at once: catalog churn (scraper) or uniform
@@ -15,6 +15,8 @@ it tells us which ones need a fix.
                         effective number of independent series
  H. Spot pegged       - spot price a fixed fraction of on-demand, so spot carries no extra info
  I. Extreme jumps     - moves > 3x (or < 1/3x) and whether they reverse within 3 days
+ J. Frozen days       - days on which AWS spot (which normally changes on most days) shows no change
+                        at all: a stale feed, not a quiet market. Compare with common.STALE_WINDOWS.
 """
 import os
 
@@ -22,14 +24,11 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency
 
-from common import EPS, HERE, KEY, OUT, load_returns
+from common import EPS, KEY, OUT, SAMPLE_HOUR_UTC, STALE_WINDOWS, load_raw, load_returns
 
 pd.set_option("display.width", 220, "display.max_columns", 30, "display.max_rows", 200)
 
-raw = pd.read_parquet(os.path.join(HERE, "all.parquet"))
-raw = raw[(raw.quality == "ok") & (raw.gpu_count > 0) & (raw.price_per_hour > 0)
-          & (raw.gpu_type != "Unknown") & (raw.provider != "datacrunch")].copy()
-raw["day"] = raw.timestamp.dt.tz_convert(None).dt.normalize()
+raw = load_raw()
 raw["market"] = np.where(raw.is_spot, "spot", "on-demand")
 R, meta, days = load_returns(clean=False)  # audit the raw data, before fixes
 meta = meta.assign(market=np.where(meta.is_spot, "spot", "on-demand"))
@@ -55,7 +54,10 @@ cov = pd.DataFrame({
 report["A"] = save("coverage", cov.sort_values("days_missing", ascending=False))
 
 # ------------------------------------------------------------------ B. snapshot timing
-last = raw.groupby("day").timestamp.max().dt.tz_convert(None)
+snaps = raw.timestamp.dt.tz_convert(None).drop_duplicates().to_frame("ts")
+snaps["day"] = snaps.ts.dt.normalize()
+snaps["dist"] = ((snaps.ts - snaps.day).dt.total_seconds() / 3600 - SAMPLE_HOUR_UTC).abs()
+last = snaps.sort_values(["dist", "ts"]).drop_duplicates("day").set_index("day").ts.sort_index()  # picked snapshot
 interval_h = (last - last.shift()).dt.total_seconds() / 3600
 interval_h = interval_h[(last.index.to_series().diff().dt.days == 1)]
 timing = pd.DataFrame({"last_snapshot_hour_utc": last.dt.hour, "hours_since_prev_last": interval_h})
@@ -191,6 +193,19 @@ ext = pd.DataFrame(rows)
 report["I"] = save("extreme_jumps", ext.groupby(["provider", "market"]).agg(
     jumps=("move_x", "size"), share_reversed=("reversed_within_3d", "mean"),
     median_move_x=("move_x", "median")).round(2) if len(ext) else ext)
+
+# ------------------------------------------------------------------ J. frozen days
+aws = meta.index[(meta.provider == "aws") & meta.is_spot]
+aws_rate = CHG[aws].mean(1)
+frozen = aws_rate[aws_rate == 0].index
+known = pd.DatetimeIndex([d for _, a, b in STALE_WINDOWS for d in pd.date_range(a, b)])
+rows = []
+for d in frozen:
+    rates = {p: CHG[ids].loc[d].mean() for p, ids in meta.groupby("provider").groups.items()
+             if CHG[ids].loc[d].notna().sum() >= 5}
+    rows.append({"day": d.date(), "in_STALE_WINDOWS": d in known,
+                 "providers_with_changes": ", ".join(f"{p} {v:.2f}" for p, v in sorted(rates.items()) if v > 0)})
+report["J"] = save("frozen_days", pd.DataFrame(rows).set_index("day") if rows else pd.DataFrame())
 
 for k, v in report.items():
     print(f"\n===== {k} =====\n{v}")

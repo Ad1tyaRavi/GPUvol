@@ -7,6 +7,8 @@ A. Within a provider: per day, activity A_t = share of the provider's listings w
    pairwise correlation between two listings' change indicators,
        rho = (Var(A) * N / (p(1-p)) - 1) / (N - 1)     (N = typical listings per day, p = mean A)
    is ~0 for independent listings and ~1 when the provider reprices everything at once.
+   It is also reported after removing weekday means and a 31-day trend from A_t (as B and C do),
+   so a weekly schedule or a slow change in activity doesn't count as listings moving together.
 B. Across providers: correlation of daily activity, same day and lead-lag (provider X yesterday vs
    provider Y today), plus the same for direction (mean log return of the provider's spot listings).
 C. Same chip, different providers: per-GPU spot index per provider; same-day and lead-lag return
@@ -17,7 +19,7 @@ don't count as providers moving together. Correlations are Spearman (rank), so o
 day can't drive them.
 Null for B and C: circularly shift one series by a random whole number of weeks, 500 times; a
 correlation is called significant if |corr| exceeds the 95th percentile of shifted |corr|.
-Data-hygiene fixes (duplicate paths collapsed, suspect days dropped, Nebius split at 2026-10-08)
+Data-hygiene fixes (duplicate paths collapsed, stale-feed days dropped, Nebius split at 2026-10-08)
 come via common.py.
 """
 import itertools
@@ -40,6 +42,13 @@ R = dedupe_paths(R[spot])
 meta = meta.loc[R.columns]
 chg = (R.abs() > EPS).astype(float).where(R.notna())  # 1 = changed, 0 = didn't, NaN = no data
 
+
+def deseason(s):
+    """Remove weekday means, then the 31-day centred rolling mean."""
+    s = s - s.groupby(s.index.dayofweek).transform("mean")
+    return s - s.rolling(31, center=True, min_periods=10).mean()
+
+
 # ------------------------------------------------------------------ A. within-provider sync
 act, dirn, rows = {}, {}, []
 for prov, ids in meta.groupby("provider").groups.items():
@@ -51,8 +60,10 @@ for prov, ids in meta.groupby("provider").groups.items():
     dirn[prov] = R[ids].mean(1).where(obs >= 5)
     p, N = a.mean(), obs[obs >= 5].median()
     rho = (a.var() * N / (p * (1 - p)) - 1) / (N - 1)
+    rho_ds = ((deseason(a) + p).var() * N / (p * (1 - p)) - 1) / (N - 1)
     big = a > 0.5
     rows.append({"provider": prov, "listings_per_day": N, "mean_activity": p, "implied_pairwise_corr": rho,
+                 "implied_pairwise_corr_deseasoned": rho_ds,
                  "share_of_days_most_listings_change": big.mean(),
                  "share_of_changes_on_those_days": (chg[ids].sum(1)[big]).sum() / chg[ids].sum(1).sum()})
     rows[-1]["days_with_any_change"] = int((a > 0).sum())
@@ -71,12 +82,6 @@ shock.to_csv(os.path.join(OUT, "sync_shared_shock_days.csv"))
 active = within.index[within.days_with_any_change >= 10]
 
 
-def deseason(s):
-    """Remove weekday means, then the 31-day centred rolling mean."""
-    s = s - s.groupby(s.index.dayofweek).transform("mean")
-    return s - s.rolling(31, center=True, min_periods=10).mean()
-
-
 act, dirn = act[active].apply(deseason), dirn[active].apply(deseason)
 
 
@@ -84,7 +89,7 @@ act, dirn = act[active].apply(deseason), dirn[active].apply(deseason)
 def corr_lag(x, y, lag):
     """Spearman corr(x_{t-lag}, y_t) on overlapping non-NaN days; returns (corr, n).
     Rank correlation on purpose: Pearson here is driven by one or two shared shock days
-    (e.g. AWS-GCP direction is 0.59 Pearson, almost all from 2026-07-23, vs 0.09 Spearman)."""
+    (catch-up days after a stale feed, when everything moves at once)."""
     xs = x.shift(lag)
     m = xs.notna() & y.notna()
     if m.sum() < MIN_OVERLAP or xs[m].nunique() < 3 or y[m].nunique() < 3:

@@ -1,7 +1,7 @@
 group,active_listings,unique_return_paths,largest_identical_group,duplication_factor
 verda spot,105,24,12,4.38
 verda on-demand,105,27,12,3.89
-gcp spot,2049,890,36,2.3
+gcp spot,2049,889,36,2.3
 nebius spot,16,10,2,1.6
-azure spot,88,77,2,1.14
+azure spot,88,79,2,1.11
 aws spot,535,535,1,1.0

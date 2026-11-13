@@ -5,8 +5,12 @@ Two levels of analysis:
      Prices are sticky, so volatility = how often a price changes x how big the jump is.
   2. Index level: per (provider, gpu_type, spot) daily median $/GPU-hr. This handles
      marketplaces (Vast.ai) whose listing IDs churn every day.
-Same data-hygiene fixes as the clustering scripts (see audit.py / common.py): Nebius split at its
-2026-10-08 regime switch, suspect days dropped, identical listing return paths collapsed.
+Same sampling and data-hygiene fixes as the clustering scripts (see audit.py / common.py): one
+snapshot per listing-day (closest to 09:00 UTC), stale-feed days dropped, Nebius split at its
+2026-10-08 regime switch, identical listing return paths collapsed.
+Volatility uses consecutive-day returns only. Price trends (the matched-listing index) also use
+returns that span gaps (the 2026-03-10..05-07 hole in the dataset, the stale-feed windows, a
+listing's own missing days), so a price change is never lost just because it happened unobserved.
 Outputs go to ./out (CSV tables + PNG charts), or out/with_suspect_days/ if GPUVOL_KEEP_SUSPECT=1.
 """
 import os
@@ -15,21 +19,13 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import (BLUE, CATCHUP_DAY, HERE, INK, KEEP_SUSPECT, MUTED, NEBIUS_REGIME_START, ORANGE, OUT,
-                    STALE_PROVIDERS, STALE_START, SUSPECT_DAYS, dedupe_paths, stale_rows)
+from common import (BLUE, INK, MUTED, NEBIUS_REGIME_START, ORANGE, OUT, TIER, TIER_OTHER, dedupe_paths,
+                    load_raw, pick_daily, stale_rows)
 
 MIN_OBS = 30  # min daily returns for a series to count
 
 # ---------------------------------------------------------------- load + clean
-src = os.path.join(HERE, "all.parquet")
-if not os.path.exists(src):
-    import glob
-    pd.concat([pd.read_parquet(f) for f in glob.glob(os.path.join(HERE, "data/prices/*/*.parquet"))],
-              ignore_index=True).to_parquet(src)
-df = pd.read_parquet(src)
-df = df[(df.quality == "ok") & (df.gpu_count > 0) & (df.price_per_hour > 0) & (df.gpu_type != "Unknown")].copy()
-# DataCrunch rebranded to Verda; its May-Jul rows duplicate Verda's catalog, so drop them.
-df = df[df.provider != "datacrunch"]
+df = load_raw()
 # Fractional (vGPU) slices are labeled gpu_count=1 with gpu_memory_gb = the slice's VRAM,
 # e.g. Vultr "vcg-a100-1c-6g-4vram" is 4 GB of an 80 GB A100. Convert to effective GPUs using
 # the full card's memory, only for provider/chip pairs known to sell slices (A100 40 vs 80 GB
@@ -41,30 +37,15 @@ df["gpu_fraction"] = (df.gpu_memory_gb / full).clip(upper=1).fillna(1.0)
 df["is_fractional"] = df.gpu_fraction < 0.99
 df["eff_gpus"] = df.gpu_count * df.gpu_fraction
 df["ppg"] = df.price_per_hour / df.eff_gpus  # $ per (full) GPU-hour
-df["day"] = df.timestamp.dt.tz_convert(None).dt.normalize()
 df["market"] = np.where(df.is_spot, "spot", "on-demand")
 df["region_group"] = df.region_group.fillna("Unknown")
+# Stale feed (see common.STALE_WINDOWS): frozen rows are dropped, so the catch-up return after each
+# window has a gap; it drops out of the consecutive-day returns but stays in the trend returns.
+df = df[~stale_rows(df.provider, df.day)]
 # Nebius: static spot pricing until 2026-10-07, daily dynamic from 2026-10-08. Treat as two providers.
 nb = df.provider == "nebius"
 df.loc[nb, "provider"] = np.where(df.loc[nb, "day"] < NEBIUS_REGIME_START, "nebius_static", "nebius_dynamic")
-# Suspect days (likely scraper/catalog changes): dropping the rows also drops the next day's return,
-# because returns require consecutive days.
-if not KEEP_SUSPECT:
-    df = df[~df.day.isin(SUSPECT_DAYS)]
-# Stale feed (AWS/GCP frozen 2026-06-25..07-22): those rows are dropped, so the 07-23 return has a
-# gap and drops out of the consecutive-day returns; it is added back only for the price trends.
-df = df[~stale_rows(df.provider, df.day)]
-
-TIER = {  # rough generation / segment buckets
-    **dict.fromkeys(["B200", "B300", "GB200", "GB300"], "Blackwell DC"),
-    **dict.fromkeys(["H100", "H200", "H100NVL", "GH200", "H800"], "Hopper DC"),
-    **dict.fromkeys(["A100", "A800", "A10", "A10G", "A30", "A40", "A16"], "Ampere DC"),
-    **dict.fromkeys(["L4", "L40", "L40S"], "Ada DC"),
-    **dict.fromkeys(["V100", "P100", "P4", "T4", "K80", "M60"], "Legacy DC"),
-    **dict.fromkeys(["RTX4090", "RTX5090", "RTX3090", "RTX4080", "RTX5080", "A6000",
-                     "RTX6000Ada", "RTXPRO6000", "RTXPRO6000S", "RTXPRO4500", "A5000", "A4000"], "Workstation/consumer"),
-}
-df["tier"] = df.gpu_type.map(TIER).fillna("Other (TPU, misc)")
+df["tier"] = df.gpu_type.map(TIER).fillna(TIER_OTHER)
 HYPERSCALERS = {"aws", "gcp", "azure", "oci"}
 df["provider_class"] = np.select(
     [df.provider.isin(HYPERSCALERS), df.provider.isin(["vastai", "runpod", "lium"])],
@@ -72,20 +53,27 @@ df["provider_class"] = np.select(
 
 # ------------------------------------------------------------ listing level
 key = ["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count", "eff_gpus", "vcpus", "ram_gb"]
-daily = (df.sort_values("timestamp").groupby(key + ["day"], dropna=False)
-         .agg(ppg=("ppg", "last"), market=("market", "first"), tier=("tier", "first"),
-              region_group=("region_group", "first"), provider_class=("provider_class", "first"))
-         .reset_index())
-daily = daily.sort_values(key + ["day"])
+# One snapshot per listing-day for everything below (listing returns, indexes, spreads, drift).
+df = pick_daily(df, key)
+daily = df[key + ["day", "ppg", "market", "tier", "region_group", "provider_class"]].sort_values(key + ["day"])
 g = daily.groupby(key, dropna=False, sort=False)
 daily["gap"] = g.day.diff().dt.days
 daily["r"] = np.log(daily.ppg / g.ppg.shift())
 daily["sid"] = daily.groupby(key, dropna=False).ngroup()
-r = daily[daily.gap == 1].dropna(subset=["r"])  # consecutive-day returns only
-# For trends only: also the 07-23 catch-up return that spans the stale window.
-catchup = (daily.provider.isin(STALE_PROVIDERS) & (daily.day == CATCHUP_DAY)
-           & (daily.day - pd.to_timedelta(daily.gap, unit="D") == STALE_START - pd.Timedelta(days=1)))
-r_trend = daily[(daily.gap == 1) | catchup].dropna(subset=["r"])
+r = daily[daily.gap == 1].dropna(subset=["r"])  # consecutive-day returns only (volatility)
+# Trends also bridge gaps, but only gaps the listing could not have been seen in: days with no
+# snapshot at all (the 2026-03-10..05-07 hole, short outages) or stale-feed days for its provider.
+# A listing that is absent while the rest of its provider is scraped (marketplace churn, a
+# delisting) is not bridged: what it comes back at is a new offer, not a price move.
+all_days = pd.date_range(daily.day.min(), daily.day.max(), freq="D")
+seen = df.groupby(["provider", "day"]).size().unstack("provider").reindex(all_days).notna().cumsum()
+prev_day = daily.day - pd.to_timedelta(daily.gap, unit="D")
+ok = daily.gap.notna()
+seen_long = seen.stack().rename("n")  # (day, provider) -> observable days so far
+n_now = seen_long.reindex(pd.MultiIndex.from_arrays([daily.day - pd.Timedelta(days=1), daily.provider])).to_numpy()
+n_prev = seen_long.reindex(pd.MultiIndex.from_arrays([prev_day.where(ok, daily.day), daily.provider])).to_numpy()
+bridgeable = ok.to_numpy() & ((daily.gap == 1).to_numpy() | (n_now == n_prev))
+r_trend = daily[bridgeable].dropna(subset=["r"])  # consecutive + structural-gap returns (trends)
 
 # Collapse listings with identical return paths (GCP/Verda set one price for many regions/sizes),
 # so one price decision isn't counted many times in the axis tables or the matched index.
@@ -182,16 +170,34 @@ drift.to_csv(os.path.join(OUT, "flagship_monthly_drift.csv"))
 
 # Chained (matched-listing) index: each day's return = equal-weight mean of same-listing log
 # changes across listings seen on both days. Immune to listings entering/leaving the sample.
-rr = r_trend[r_trend.provider != "vastai"]  # trends include the 07-23 catch-up
+# A listing's return that spans a gap enters on the day it is seen again, so moves made while
+# unobserved (dataset hole, stale feed) still reach the index level.
+rr = r_trend[r_trend.provider != "vastai"]
 chain = rr.groupby(["gpu_type", "market", "day"]).r.agg(["mean", "size"]).reset_index()
 chain = chain[chain["size"] >= 3]
+# Volatility only from consecutive-day returns (a gap return is weeks of moves, not one day).
+rc = r[r.provider != "vastai"].groupby(["gpu_type", "market", "day"]).r.agg(["mean", "size"])
+rc = rc[rc["size"] >= 3]["mean"]
 chain_sum = (chain.groupby(["gpu_type", "market"])
              .agg(days=("mean", "size"), cum_change=("mean", lambda x: np.expm1(x.sum())),
-                  daily_vol=("mean", "std"), listings_per_day=("size", "median")))
+                  listings_per_day=("size", "median")))
+chain_sum["cum_change_consecutive_only"] = rc.groupby(["gpu_type", "market"]).sum().pipe(np.expm1)
+chain_sum["daily_vol"] = rc.groupby(["gpu_type", "market"]).std()
 chain_sum["ann_vol"] = chain_sum.daily_vol * np.sqrt(365)
+chain["level"] = chain.groupby(["gpu_type", "market"])["mean"].cumsum().pipe(np.exp)
+
+
+def vol_28d(s):
+    """Annualized vol from overlapping 28-day log changes of the index level. sqrt(365) scaling of
+    daily vol understates long-horizon risk when daily returns are positively autocorrelated."""
+    lv = np.log(s.set_index("day").level)
+    lv = lv.reindex(pd.date_range(lv.index.min(), lv.index.max(), freq="D")).ffill()
+    return lv.diff(28).std() * np.sqrt(365 / 28)
+
+
+chain_sum["ann_vol_28d"] = chain.groupby(["gpu_type", "market"])[["day", "level"]].apply(vol_28d)
 chain_sum = chain_sum[chain_sum.days >= 60].round(3)
 chain_sum.to_csv(os.path.join(OUT, "chained_index.csv"))
-chain["level"] = chain.groupby(["gpu_type", "market"])["mean"].cumsum().pipe(np.exp)
 chain.round(5).to_csv(os.path.join(OUT, "chained_index_daily.csv"), index=False)
 
 fig, axes = plt.subplots(1, 2, figsize=(12, 4.5), sharey=True)

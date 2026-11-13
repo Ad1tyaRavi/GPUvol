@@ -1,0 +1,7 @@
+horizon_days,pairs,n_pairs,median_corr,null_p025,null_p975,beats_null
+1,"same instance type, different region",2911,0.0142,-0.0061,0.0024,True
+1,"same region, different chip",7817,0.0741,-0.0048,0.0012,True
+1,"different chip, different region",105165,0.0052,-0.0029,-0.0016,True
+7,"same instance type, different region",2911,0.0347,-0.0136,0.0052,True
+7,"same region, different chip",7817,0.123,-0.0134,-0.0006,True
+7,"different chip, different region",105165,0.0098,-0.0056,-0.0019,True

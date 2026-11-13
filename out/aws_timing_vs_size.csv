@@ -1,0 +1,10 @@
+,value
+p_change,0.9437
+p_change_after_change,0.9875
+p_change_after_quiet_day,0.1945
+quiet_runs,1055.0
+share_quiet_days_in_runs_ge3,0.7279
+size_corr_raw,0.388
+size_corr_raw_null_p975,0.2104
+size_corr_ar_filtered,0.1725
+size_corr_ar_filtered_null_p975,0.1437

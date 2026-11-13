@@ -1,7 +1,7 @@
 """Figures for the README, written to docs/img/.
 
-Run after analysis.py and event_clustering.py (it reads their CSVs from out/), plus the raw
-snapshots for the per-provider price paths.
+Run after analysis.py and aws_spot.py (it reads their CSVs from out/), plus the raw snapshots
+for the per-provider price paths.
 """
 import os
 
@@ -9,10 +9,18 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-from common import (BLUE, GRID, HERE, INK, MUTED, NEBIUS_REGIME_START, ORANGE, STALE_END, STALE_PROVIDERS,
-                    STALE_START, SUSPECT_DAYS, stale_rows)
+from common import (BLUE, GRID, HERE, INK, MUTED, NEBIUS_REGIME_START, ORANGE, STALE_EXEMPT, load_raw,
+                    pick_daily, stale_rows, stale_spans)
 
-STALE_COLOR = "#ece6dc"  # AWS/GCP stale-feed window, drawn as missing data
+STALE_COLOR = "#ece6dc"  # stale-feed windows, drawn as missing data
+
+
+def shade_stale(ax, prov=None, label=True):
+    """Shade the stale-feed windows that apply to `prov` (all of them when prov is None)."""
+    for k, (provs, a, b) in enumerate(stale_spans()):
+        if prov is None or (prov not in STALE_EXEMPT if provs is None else prov in provs):
+            ax.axvspan(a, b + pd.Timedelta(days=1), color=STALE_COLOR, lw=0,
+                       label="stale feed" if label and k == 0 else None)
 
 IMG = os.path.join(HERE, "docs", "img")
 OUTD = os.path.join(HERE, "out")
@@ -27,19 +35,16 @@ def save(fig, name):
 
 
 # ------------------------------------------------------------------ 1. four pricing styles
-# One typical listing per provider, $/GPU-hr, last snapshot each day, suspect days dropped.
+# One typical listing per provider, $/GPU-hr, snapshot closest to 09:00 UTC, stale days dropped.
 PICKS = [  # provider, instance_type, region, is_spot, title
     ("aws", "p5.48xlarge", "eu-north-1", True, "AWS spot H100: small moves almost every day"),
     ("gcp", "a3-edgegpu-8g", "europe-west3-a", True, "GCP spot H100: steps, in weekly batches"),
     ("verda", "1H100.80S.30V", "FIN-01", False, "Verda on-demand H100: list price that moves"),
     ("nebius", "gpu-h200-sxm 1gpu-16vcpu-200gb", "eu-north1", True, "Nebius spot H200: static, then dynamic"),
 ]
-raw = pd.read_parquet(os.path.join(HERE, "all.parquet"),
-                      columns=["provider", "instance_type", "region", "is_spot", "gpu_count", "price_per_hour",
-                               "timestamp", "quality"])
-raw = raw[(raw.quality == "ok") & (raw.gpu_count > 0) & (raw.price_per_hour > 0)]
-raw["day"] = raw.timestamp.dt.tz_convert(None).dt.normalize()
-raw = raw[~raw.day.isin(SUSPECT_DAYS) & ~stale_rows(raw.provider, raw.day)]
+raw = load_raw(columns=["provider", "instance_type", "region", "is_spot", "gpu_type", "gpu_count",
+                        "price_per_hour", "timestamp", "quality"])
+raw = raw[~stale_rows(raw.provider, raw.day)]
 
 # Stretches of 3+ days with no snapshots at all (e.g. 2026-03-10 to 2026-05-07): shaded, line broken.
 all_days = pd.date_range(raw.day.min(), raw.day.max(), freq="D")
@@ -50,13 +55,12 @@ gaps = runs[runs["count"] >= 3]
 fig, axes = plt.subplots(2, 2, figsize=(12, 6.8), sharex=True)
 for i, (ax, (prov, inst, reg, spot, title)) in enumerate(zip(axes.flat, PICKS)):
     s = raw[(raw.provider == prov) & (raw.instance_type == inst) & (raw.region == reg) & (raw.is_spot == spot)]
-    s = s.sort_values("timestamp").groupby("day").agg(p=("price_per_hour", "last"), n=("gpu_count", "first"))
+    s = pick_daily(s, []).set_index("day").sort_index().rename(columns={"price_per_hour": "p", "gpu_count": "n"})
     price = s.p / s.n
     full = price.reindex(pd.date_range(price.index.min(), price.index.max(), freq="D")).ffill(limit=2)
     for _, g in gaps.iterrows():
         ax.axvspan(g["min"], g["max"], color=GRID, lw=0, label="no data" if i == 0 and _ == gaps.index[0] else None)
-    if prov in STALE_PROVIDERS:
-        ax.axvspan(STALE_START, STALE_END, color=STALE_COLOR, lw=0, label="stale feed" if i == 0 else None)
+    shade_stale(ax, prov, label=i == 0)
     ax.plot(full.index, full.values, drawstyle="steps-post", color=BLUE, lw=1.6)
     chg = price[price.diff().abs() > 1e-9]
     sub = f"price changed on {len(chg)} of {len(price)} days"
@@ -82,7 +86,7 @@ chain = chain[chain.market == "spot"]
 fig, ax = plt.subplots(figsize=(9, 4.4))
 for _, g in gaps.iterrows():
     ax.axvspan(g["min"], g["max"], color=GRID, lw=0, label="no data" if _ == gaps.index[0] else None)
-ax.axvspan(STALE_START, STALE_END, color=STALE_COLOR, lw=0, label="AWS/GCP feed stale")
+shade_stale(ax)
 ends = {}
 for gpu, c in GPU_COLORS.items():
     s = chain[chain.gpu_type == gpu]
@@ -100,77 +104,64 @@ ax.set_ylabel("spot price index (Jan 2026 = 1.0)")
 ax.set_xlim(right=ax.get_xlim()[1] + 30)
 ax.legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
 fig.autofmt_xdate()
-ax.set_title("Spot prices by chip: most up, in steps, mostly from August", loc="left", fontsize=12)
+ax.set_title("Spot prices by chip: most up, in steps", loc="left", fontsize=12, pad=16)
+ax.text(0, 1.01, "moves made while unobserved (no data, stale feed) count on the day prices are seen again",
+        transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
 save(fig, "spot_index.png")
 
-# ------------------------------------------------------------------ 3. AWS bursts decay
-lift = pd.read_csv(os.path.join(OUTD, "events_lift_by_lag.csv"), index_col="lag")["aws spot"]
-null = pd.read_csv(os.path.join(OUTD, "events_lift_by_lag_null.csv"))
-null = null[null.group == "aws spot"].set_index("lag")
-fig, ax = plt.subplots(figsize=(7.5, 3.8))
-ax.fill_between(null.index, null.null_p025, null.null_p975, color="#a9a8a2", edgecolor="#a9a8a2", lw=2,
-                label="chance (shuffled within weekday & month)")
-ax.plot(lift.index, lift.values, color=ORANGE, lw=2.2, marker="o", ms=5, label="actual")
-ax.set_xlabel("days since a price change")
-ax.set_ylabel("how much likelier another change is")
-ax.yaxis.set_major_formatter(plt.matplotlib.ticker.FormatStrFormatter("%gx"))
-ax.set_ylim(0, None)
-ax.set_xticks(range(1, len(lift) + 1))
-ax.legend(frameon=False, fontsize=8)
+# ------------------------------------------------------------------ 3. AWS spot momentum
+bins = pd.read_csv(os.path.join(OUTD, "aws_momentum_bins.csv"))
+mom = pd.read_csv(os.path.join(OUTD, "aws_momentum.csv"), index_col=0)
+acf = pd.read_csv(os.path.join(OUTD, "aws_return_acf.csv"), index_col="lag").median_acf_r
+fig, axes = plt.subplots(1, 2, figsize=(12, 4.2), gridspec_kw={"width_ratios": [1.1, 1]})
+ax = axes[0]
+lim = 100 * np.abs(bins.today).max() * 1.05
+xs = np.linspace(-lim, lim, 2)
+ax.plot(xs, xs * mom.loc["all", "slope"], color=MUTED, lw=1, ls="--",
+        label=f"next week = {mom.loc['all', 'slope']:.2f} x today")
+ax.scatter(100 * bins.today, 100 * bins.next7, color=ORANGE, s=34, zorder=3, label="average, 20 bins of today's move")
+ax.axhline(0, color=MUTED, lw=0.8); ax.axvline(0, color=MUTED, lw=0.8)
+ax.set_xlabel("today's price change (%)")
+ax.set_ylabel("change over the next 7 days (%)")
+ax.legend(frameon=False, fontsize=8, loc="upper left")
+ax.set_title("Today's move predicts the next week", loc="left", fontsize=11)
+ax = axes[1]
+ax.bar(acf.index, acf.values, color=[ORANGE if v > 0 else BLUE for v in acf.values], width=0.8)
+ax.axhline(0, color=MUTED, lw=0.8)
+ax.set_xlabel("lag (days)")
+ax.set_ylabel("median autocorrelation of daily changes")
+ax.set_xticks([1, 7, 14, 21, 28, 35, 42, 49, 56])
 ax.grid(axis="x", visible=False)
-ax.set_title("AWS spot: one price change makes more changes likely for about two weeks", loc="left",
-             fontsize=12, pad=16)
-ax.text(0, 1.02, "chance sits at 2-3x, not 1x, because some listings simply change more often than others",
-        transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
-save(fig, "aws_bursts.png")
+ax.set_title("Momentum for ~5 days, then a slight pullback", loc="left", fontsize=11)
+fig.suptitle(f"AWS spot prices keep going: the next week continues today's direction "
+             f"{mom.loc['all', 'same_direction']:.0%} of the time "
+             f"({mom.loc['out_of_sample_sep_nov', 'same_direction']:.0%} out of sample)",
+             x=0.01, ha="left", fontsize=12, color=INK)
+fig.tight_layout()
+save(fig, "aws_momentum.png")
 
-# ------------------------------------------------------------------ 4. price-change raster
-# Rows: up to 40 spot listings per provider (identical price paths collapsed, spread across the
-# provider's range of change rates). Columns: days. Dark = price changed that day.
-import matplotlib.dates as mdates
-
-from common import EPS, dedupe_paths, load_returns
-
-R, meta, days = load_returns(clean=False)  # Nebius kept whole so its switch is visible
-bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
-R.loc[R.index.intersection(bad)] = np.nan  # same suspect days as the analysis
-R.loc[STALE_START:STALE_END, meta.index[meta.provider.isin(STALE_PROVIDERS)]] = np.nan  # stale feed
-ROWS = 40
-blocks, labels = [], []
-for prov in ["aws", "gcp", "verda", "nebius", "azure"]:
-    ids = meta.index[(meta.provider == prov) & meta.is_spot]
-    X = R[ids]
-    X = dedupe_paths(X.loc[:, X.notna().sum() >= 150])
-    rate = ((X.abs() > EPS).sum() / X.notna().sum()).sort_values(ascending=False)
-    pick = rate.index[np.unique(np.linspace(0, len(rate) - 1, min(ROWS, len(rate))).round().astype(int))]
-    M = np.where(X[pick].isna(), np.nan, (X[pick].abs() > EPS).astype(float)).T
-    blocks.append(M)
-    labels.append((prov, len(pick)))
-sep = np.full((3, len(R.index)), -1.0)  # spacer rows between providers
-mat = np.vstack([b for blk in blocks for b in (blk, sep)][:-1])
-rgb = np.ones(mat.shape + (3,))
-hexrgb = lambda h: [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
-rgb[mat == 0] = hexrgb("#f2f1ed")       # observed, no change
-rgb[mat == 1] = hexrgb("#2a78d6")       # price changed
-rgb[np.isnan(mat)] = hexrgb("#fcfcfb")  # no data
-rgb[mat == -1] = hexrgb("#fcfcfb")      # spacer
-x0, x1 = mdates.date2num(R.index[0]), mdates.date2num(R.index[-1] + pd.Timedelta(days=1))
-fig, ax = plt.subplots(figsize=(12, 6.2))
-ax.imshow(rgb, aspect="auto", interpolation="nearest", extent=[x0, x1, mat.shape[0], 0])
-ticks, row = [], 0
-for prov, n in labels:
-    ticks.append(row + n / 2)
-    row += n + 3
-ax.set_yticks(ticks, [p.upper() if p in ("aws", "gcp") else p.capitalize() for p, _ in labels])
-ax.tick_params(axis="y", length=0)
-ax.xaxis_date()
-ax.grid(False)
-for s in ax.spines.values():
-    s.set_visible(False)
-fig.autofmt_xdate()
-ax.set_title("Providers reprice in their own batches, not together", loc="left", fontsize=12, pad=16)
-ax.text(0, 1.01, f"blue = price changed that day; one row per spot listing (up to {ROWS} per provider), "
-        "one column per day; white = no data", transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
-save(fig, "repricing_raster.png")
+# ------------------------------------------------------------------ 3b. AWS spot local markets
+co = pd.read_csv(os.path.join(OUTD, "aws_comovement.csv"))
+order = ["different chip, different region", "same instance type, different region", "same region, different chip"]
+fig, ax = plt.subplots(figsize=(9, 3.4))
+y = np.arange(len(order))
+for off, h, c, lab in [(0.18, 1, BLUE, "daily changes"), (-0.18, 7, ORANGE, "weekly changes")]:
+    t = co[co.horizon_days == h].set_index("pairs").loc[order]
+    ax.barh(y + off, t.median_corr, height=0.34, color=c, label=lab)
+    for yi, (v, n) in enumerate(zip(t.median_corr, t.n_pairs)):
+        ax.text(max(v, 0), yi + off, f" {v:.3f}", va="center", fontsize=8, color=MUTED)
+    ax.scatter(t.null_p975, y + off, marker="|", s=120, color=INK, zorder=3,
+               label="chance (95th pct, listings shifted in time)" if h == 1 else None)
+pairs = co[co.horizon_days == 1].set_index("pairs").loc[order].n_pairs
+ax.set_yticks(y, [f"{o}\n({n:,} pairs)" for o, n in zip(order, pairs)])
+ax.axvline(0, color=MUTED, lw=0.8)
+ax.set_xlim(-0.02, 0.16)
+ax.set_xlabel("median correlation between two AWS spot listings")
+ax.legend(frameon=False, fontsize=8, loc="lower right")
+ax.grid(axis="y", visible=False)
+fig.suptitle("AWS spot is hundreds of local markets: listings barely move together, and region matters more than chip",
+             x=0.01, ha="left", fontsize=11.5, color=INK)
+fig.tight_layout()
+save(fig, "aws_local_markets.png")
 
 print("wrote", sorted(os.listdir(IMG)))
