@@ -17,10 +17,10 @@ Nebius was static until 8 Oct 2026, then switched to daily dynamic pricing.
 
 OCI, Lambda and Vultr don't move at all.
 
-**Spot moves, on-demand doesn't.** From January to November, spot H100 rose ~40% and B200 and
-L40S ~55%, while on-demand prices for the same chips barely moved.
+**Spot moves, on-demand doesn't.** On-demand prices for the major chips moved less than 3% all
+year. Spot prices mostly rose, in steps, and not all the same way:
 
-![Spot vs on-demand price index](docs/img/spot_vs_ondemand_index.png)
+![Spot price index by chip](docs/img/spot_index.png)
 
 **AWS spot volatility clusters.** A price change makes another one far more likely over the
 next two weeks. It's strongest for Hopper and Blackwell chips. The clustering is in many small
@@ -34,6 +34,8 @@ you wouldn't see in a traded market. Nobody can arbitrage GPU-hours, so nothing 
 **Providers reprice alone.** Within a provider, listings change together (pairwise correlation
 0.70-0.92). Across providers the links are weak (correlations of 0.25 or less), even for the
 same chip.
+
+![Repricing raster](docs/img/repricing_raster.png)
 
 **Same chip, very different prices.** On a typical day the priciest A100 is ~6.6x the cheapest,
 H100 ~4.6x, B200 ~2.6x. Older chips are priced much less consistently.

@@ -70,34 +70,32 @@ fig.suptitle("Four providers, four pricing machines", x=0.01, ha="left", fontsiz
 fig.tight_layout()
 save(fig, "pricing_styles.png")
 
-# ------------------------------------------------------------------ 2. spot vs on-demand index
+# ------------------------------------------------------------------ 2. spot price index by chip
+# Spot only: the on-demand index is a flat line, which the README says in words.
 chain = pd.read_csv(os.path.join(OUTD, "chained_index_daily.csv"), parse_dates=["day"])
-fig, axes = plt.subplots(1, 2, figsize=(12, 4.3), sharey=True)
-for ax, m in zip(axes, ["on-demand", "spot"]):
-    for _, g in gaps.iterrows():
-        ax.axvspan(g["min"], g["max"], color=GRID, lw=0)
-    ends = {}
-    for gpu, c in GPU_COLORS.items():
-        s = chain[(chain.gpu_type == gpu) & (chain.market == m)]
-        if len(s) < 60:
-            continue
-        ax.plot(s.day, s.level, color=c, lw=1.8, label=gpu)
-        ends[gpu] = (s.day.iloc[-1], s.level.iloc[-1])
-    if m == "spot":  # end labels, nudged apart so they don't overlap
-        prev = None
-        for gpu, (d, v) in sorted(ends.items(), key=lambda kv: kv[1][1]):
-            y = v if prev is None else max(v, prev + 0.045)
-            ax.text(d, y, " " + gpu, fontsize=8, color=MUTED, va="center")
-            prev = y
-    ax.axhline(1, color=MUTED, lw=0.8)
-    ax.set_title(f"{m.capitalize()}", loc="left", fontsize=11)
-axes[0].set_ylabel("price index (Jan 2026 = 1.0)")
-axes[0].legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
-axes[1].set_xlim(right=axes[1].get_xlim()[1] + 15)
+chain = chain[chain.market == "spot"]
+fig, ax = plt.subplots(figsize=(9, 4.4))
+for _, g in gaps.iterrows():
+    ax.axvspan(g["min"], g["max"], color=GRID, lw=0, label="no data" if _ == gaps.index[0] else None)
+ends = {}
+for gpu, c in GPU_COLORS.items():
+    s = chain[chain.gpu_type == gpu]
+    if len(s) < 60:
+        continue
+    ax.plot(s.day, s.level, color=c, lw=1.8, label=gpu)
+    ends[gpu] = (s.day.iloc[-1], s.level.iloc[-1])
+prev = None  # end labels, nudged apart so they don't overlap
+for gpu, (d, v) in sorted(ends.items(), key=lambda kv: kv[1][1]):
+    y = v if prev is None else max(v, prev + 0.045)
+    ax.text(d, y, f" {gpu} {v - 1:+.0%}", fontsize=8, color=MUTED, va="center")
+    prev = y
+ax.axhline(1, color=MUTED, lw=0.8)
+ax.set_ylabel("spot price index (Jan 2026 = 1.0)")
+ax.set_xlim(right=ax.get_xlim()[1] + 30)
+ax.legend(frameon=False, fontsize=8, ncol=2, loc="upper left")
 fig.autofmt_xdate()
-fig.suptitle("Spot prices climbed through 2026; on-demand barely moved", x=0.01, ha="left", fontsize=12.5)
-fig.tight_layout()
-save(fig, "spot_vs_ondemand_index.png")
+ax.set_title("Spot prices by chip: most up, in steps, mostly from August", loc="left", fontsize=12)
+save(fig, "spot_index.png")
 
 # ------------------------------------------------------------------ 3. AWS bursts decay
 lift = pd.read_csv(os.path.join(OUTD, "events_lift_by_lag.csv"), index_col="lag")["aws spot"]
@@ -114,7 +112,58 @@ ax.set_ylim(0, None)
 ax.set_xticks(range(1, len(lift) + 1))
 ax.legend(frameon=False, fontsize=8)
 ax.grid(axis="x", visible=False)
-ax.set_title("AWS spot: one price change makes more changes likely for about two weeks", loc="left", fontsize=12)
+ax.set_title("AWS spot: one price change makes more changes likely for about two weeks", loc="left",
+             fontsize=12, pad=16)
+ax.text(0, 1.02, "chance sits near 2x, not 1x, because some listings simply change more often than others",
+        transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
 save(fig, "aws_bursts.png")
+
+# ------------------------------------------------------------------ 4. price-change raster
+# Rows: up to 40 spot listings per provider (identical price paths collapsed, spread across the
+# provider's range of change rates). Columns: days. Dark = price changed that day.
+import matplotlib.dates as mdates
+
+from common import EPS, dedupe_paths, load_returns
+
+R, meta, days = load_returns(clean=False)  # Nebius kept whole so its switch is visible
+bad = [d + pd.Timedelta(days=k) for d in SUSPECT_DAYS for k in (0, 1)]
+R.loc[R.index.intersection(bad)] = np.nan  # same suspect days as the analysis
+ROWS = 40
+blocks, labels = [], []
+for prov in ["aws", "gcp", "verda", "nebius", "azure"]:
+    ids = meta.index[(meta.provider == prov) & meta.is_spot]
+    X = R[ids]
+    X = dedupe_paths(X.loc[:, X.notna().sum() >= 150])
+    rate = ((X.abs() > EPS).sum() / X.notna().sum()).sort_values(ascending=False)
+    pick = rate.index[np.unique(np.linspace(0, len(rate) - 1, min(ROWS, len(rate))).round().astype(int))]
+    M = np.where(X[pick].isna(), np.nan, (X[pick].abs() > EPS).astype(float)).T
+    blocks.append(M)
+    labels.append((prov, len(pick)))
+sep = np.full((3, len(R.index)), -1.0)  # spacer rows between providers
+mat = np.vstack([b for blk in blocks for b in (blk, sep)][:-1])
+rgb = np.ones(mat.shape + (3,))
+hexrgb = lambda h: [int(h[i:i + 2], 16) / 255 for i in (1, 3, 5)]
+rgb[mat == 0] = hexrgb("#f2f1ed")       # observed, no change
+rgb[mat == 1] = hexrgb("#2a78d6")       # price changed
+rgb[np.isnan(mat)] = hexrgb("#fcfcfb")  # no data
+rgb[mat == -1] = hexrgb("#fcfcfb")      # spacer
+x0, x1 = mdates.date2num(R.index[0]), mdates.date2num(R.index[-1] + pd.Timedelta(days=1))
+fig, ax = plt.subplots(figsize=(12, 6.2))
+ax.imshow(rgb, aspect="auto", interpolation="nearest", extent=[x0, x1, mat.shape[0], 0])
+ticks, row = [], 0
+for prov, n in labels:
+    ticks.append(row + n / 2)
+    row += n + 3
+ax.set_yticks(ticks, [p.upper() if p in ("aws", "gcp") else p.capitalize() for p, _ in labels])
+ax.tick_params(axis="y", length=0)
+ax.xaxis_date()
+ax.grid(False)
+for s in ax.spines.values():
+    s.set_visible(False)
+fig.autofmt_xdate()
+ax.set_title("Providers reprice in their own batches, not together", loc="left", fontsize=12, pad=16)
+ax.text(0, 1.01, f"blue = price changed that day; one row per spot listing (up to {ROWS} per provider), "
+        "one column per day; white = no data", transform=ax.transAxes, fontsize=8, color=MUTED, va="bottom")
+save(fig, "repricing_raster.png")
 
 print("wrote", sorted(os.listdir(IMG)))
