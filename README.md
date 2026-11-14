@@ -17,8 +17,9 @@ about AWS spot.
 
 Price moves keep going. When a listing moves today, the next 7 days add on average another 1.45x
 that move in the same direction. The direction carries on 60% of the time, and about 70% after
-big moves. It holds out of sample: fit through August and tested on September to November, it
-gives 1.33x and 61%.
+big moves. It holds out of sample: the 1.33x slope fitted through August, applied to September
+to November, still explains 12% of next-week moves (R²) and gets the direction right 61% of the
+time. Refit on September to November alone, the slope is 1.61x.
 
 Daily changes have an autocorrelation of about 0.5 at lag 1. It fades out by day 5, then goes
 slightly negative for a few weeks.
@@ -32,11 +33,16 @@ and compared against assuming the price doesn't change:
 
 | | 1 day | 7 days | 14 days |
 |---|---|---|---|
-| error vs. "no change" | -15% | -5% | -2% |
+| mean absolute error vs. "no change" | -14% | -5% | -2% |
+| mean squared error vs. "no change" | -2% (not significant) | -9% | -3% |
 | direction right | 71% | 60% | 55% |
 
-That's using today's move only. Adding the previous four days barely helps. It's good enough to
-help time spot jobs, but not to predict actual prices.
+That's using today's move only. Adding the previous four days barely helps. The two error
+measures disagree because squared error is dominated by a few huge jumps that nothing predicts:
+at 1 day the momentum forecast is closer on typical days, but its squared-error gain has a 95%
+interval of -9% to +24%. The 14-day column is only tested from mid-August (8 weeks), because
+14-day windows that avoid the data gaps start late; the 1- and 7-day columns start in February.
+It's good enough to help time spot jobs, but not to predict actual prices.
 
 ### Listings barely move together
 
@@ -48,15 +54,22 @@ than chip, which suggests prices follow local capacity. There isn't really one "
 
 ### So does volatility cluster?
 
-The timing of changes clusters, but their size mostly doesn't.
+Yes, mostly on a scale of weeks to months rather than day to day.
 
 Quiet days come in runs: the chance of a change is 99% after a day with a change, but only 19%
-after a quiet day. About a quarter of those quiet days are just spot sitting at the on-demand
-price, which it never goes above. H100 and H200 spot are stuck at that cap on 11-12% of days.
+after a quiet day. Part of that is just listings differing from each other; shuffling each
+listing's days (within the same weekday and month) still gives 35% after a quiet day, so runs are
+real but about half as strong as the raw numbers suggest. About a quarter of quiet days are spot
+sitting at the on-demand price, which it never goes above. H100 and H200 spot are stuck at that
+cap on 11-12% of days.
 
-Once momentum is taken out, the size of one move barely predicts the next (correlation 0.17,
-against 0.14 for shuffled data). GARCH(1,1) finds clustering in 8% of listings, against 5% by
-chance.
+Size clusters too. Once momentum is taken out, the size of one move predicts the next with a
+correlation of 0.17, against 0.00 when each listing's moves are shuffled. Most of that comes from
+calm and busy stretches lasting weeks: a shuffle that keeps each month's moves within that month
+already gives 0.11, so the day-to-day effect on top is small (0.17 vs 0.11, but well above
+chance). By the same within-month test, 27% of listings show clustering in the size of moves (vs
+5% by chance). GARCH(1,1) finds it in only 8% (vs 5%), but GARCH fits poorly here because most
+moves are small with occasional jumps.
 
 ## Other providers
 
@@ -82,8 +95,10 @@ missed.
 - Volatility, momentum and clustering use log returns between consecutive days only.
 - Listings with identical price paths count once. GCP, for example, copies one price across
   many regions.
-- Every clustering result is compared against shuffled data. The shuffles stay within the same
-  weekday and month, so weekly schedules don't count as clustering.
+- Every clustering result is compared against shuffled data. The main shuffles stay within the
+  same weekday and month, so weekly schedules don't count as clustering. This is strict: it also
+  treats slow, month-long swings in volatility as chance, so it only tests clustering inside a
+  month.
 - The trend index only uses listings seen on both days. It bridges a gap only when nothing could
   be seen (no data or a frozen feed).
 

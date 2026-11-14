@@ -10,7 +10,8 @@
                    weekday pattern, destroys alignment between listings), 30 times.
  C. Timing vs size - "clustering" split into whether a price changes (quiet days come in runs?)
                    and how big the changes are (corr of log|move| on consecutive change days,
-                   raw and AR-filtered, vs a weekday x 30-day blocked shuffle).
+                   raw and AR-filtered). Both are compared with shuffles of each listing's own
+                   values: a plain shuffle and a weekday x 30-day blocked one.
  D. On-demand ceiling - spot never exceeds on-demand for the same instance/region. How often is
                    it at that ceiling, and how much of the quiet time does the ceiling explain?
 
@@ -24,7 +25,7 @@ import numpy as np
 import pandas as pd
 
 from common import (EPS, KEY, OUT, ar_filter, aws_spot_active, load_raw, load_returns, pick_daily,
-                    shuffle_cols_blocked, stale_rows)
+                    shuffle_cols, shuffle_cols_blocked, stale_rows)
 
 rng = np.random.default_rng(4)
 R, meta, days = load_returns()
@@ -53,7 +54,10 @@ def fit(xx, yy):
 
 train, test = d < np.datetime64("2026-09-01"), d >= np.datetime64("2026-09-01")
 b_tr = fit(x[train], y[train])["slope"]
-oos = {"slope": b_tr, "r2": 1 - ((y[test] - b_tr * x[test]) ** 2).sum() / ((y[test] - y[test].mean()) ** 2).sum(),
+# "slope" here is the slope refit on the test period itself, so it can be compared with the
+# training slope; r2 is out of sample (training slope applied to test rows).
+oos = {"slope": fit(x[test], y[test])["slope"], "train_slope": b_tr,
+       "r2": 1 - ((y[test] - b_tr * x[test]) ** 2).sum() / ((y[test] - y[test].mean()) ** 2).sum(),
        "same_direction": (np.sign(y[test]) == np.sign(x[test])).mean(), "n": int(test.sum())}
 rows = {"all": fit(x, y), "out_of_sample_sep_nov": oos}
 q = pd.qcut(np.abs(x), 4, labels=["smallest", "2nd", "3rd", "largest"])
@@ -112,8 +116,6 @@ local.round(4).to_csv(os.path.join(OUT, "aws_comovement.csv"), index=False)
 
 # ------------------------------------------------------------------ C. timing vs size
 I = np.where(np.isnan(X), np.nan, (np.abs(X) > EPS).astype(float))
-a, b = I[1:], I[:-1]
-mm = ~np.isnan(a) & ~np.isnan(b)
 quiet_runs = []
 for j in range(I.shape[1]):
     n = 0
@@ -138,20 +140,40 @@ def size_corr(Z, chg):
     return np.median(out)
 
 
+def transitions(I):
+    """Pooled P(change | change yesterday), P(change | quiet yesterday)."""
+    a, b = I[1:], I[:-1]
+    mm = ~np.isnan(a) & ~np.isnan(b)
+    return (a * b)[mm].sum() / b[mm].sum(), (a * (1 - b))[mm].sum() / (1 - b)[mm].sum()
+
+
 E = ar_filter(A)[0].to_numpy()
 chg = np.abs(np.nan_to_num(X)) > EPS
+after_chg, after_quiet = transitions(I)
+# Null for the timing result: the same blocked shuffle of each listing's change days. Pooled
+# transition rates mix listings with different change rates, so even shuffled data shows runs.
+null_t = np.array([transitions(shuffle_cols_blocked(I, rng, A.index)) for _ in range(100)])
 timing = {"p_change": np.nanmean(I),
-          "p_change_after_change": (a * b)[mm].sum() / b[mm].sum(),
-          "p_change_after_quiet_day": (a * (1 - b))[mm].sum() / (1 - b)[mm].sum(),
+          "p_change_after_change": after_chg,
+          "p_change_after_quiet_day": after_quiet,
+          "p_change_after_quiet_day_null_median": np.median(null_t[:, 1]),
+          "p_change_after_quiet_day_null_p025": np.percentile(null_t[:, 1], 2.5),
           "quiet_runs": len(quiet_runs),
           "share_quiet_days_in_runs_ge3": quiet_runs[quiet_runs >= 3].sum() / quiet_runs.sum()}
+# Size correlation is measured on change days only. The nulls shuffle only those days' values
+# (raw moves, or AR residuals on the same days), so actual and null use the same days.
+# Two nulls: a plain shuffle (no clustering at any horizon) and the weekday x 30-day blocked
+# shuffle (keeps month-level volatility regimes, so it only tests clustering within a month).
 for name, Z in [("raw", X), ("ar_filtered", E)]:
-    nl = []
+    Zc = np.where(chg, Z, np.nan)
+    nulls = {"plain": [], "blocked": []}
     for _ in range(100):
-        S = shuffle_cols_blocked(Z, rng, A.index)
-        nl.append(size_corr(S, np.abs(np.nan_to_num(S)) > EPS))
+        for kind, S in [("plain", shuffle_cols(Zc, rng)), ("blocked", shuffle_cols_blocked(Zc, rng, A.index))]:
+            nulls[kind].append(size_corr(S, ~np.isnan(S)))
     timing[f"size_corr_{name}"] = size_corr(Z, chg)
-    timing[f"size_corr_{name}_null_p975"] = np.percentile(nl, 97.5)
+    for kind, nl in nulls.items():
+        timing[f"size_corr_{name}_{kind}_null_median"] = np.median(nl)
+        timing[f"size_corr_{name}_{kind}_null_p975"] = np.percentile(nl, 97.5)
 timing = pd.Series(timing)
 timing.round(4).to_csv(os.path.join(OUT, "aws_timing_vs_size.csv"), header=["value"])
 
