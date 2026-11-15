@@ -15,8 +15,9 @@ that's most of what follows.
 
 **Moves keep going.** If a listing moves today, the next 7 days add another 1.45x that move on
 average, in the same direction 60% of the time (about 70% after big moves). Daily changes have an
-autocorrelation of about 0.5 at lag 1, gone by day 5. The slope fitted through August still works
-on September to November: right direction 61% of the time, R² 0.12.
+autocorrelation of about 0.5 at lag 1, gone by day 5. Fitted through August on listings picked from
+data up to then, the slope still works on September to November: right direction 60% of the time,
+R² 0.13.
 
 ![AWS spot momentum](docs/img/aws_momentum.png)
 
@@ -30,8 +31,9 @@ compared with assuming no change:
 | direction right | 71% | 60% | 55% |
 
 Squared error is dominated by a few huge jumps nothing predicts. The 14-day column is only tested
-from mid-August. Adding more past days barely helps. Good enough to time spot jobs, not to
-predict prices.
+from mid-August. Adding more past days barely helps. Rerun from September on listings picked
+from earlier data only, the scores hold or improve, so picking listings with hindsight isn't
+driving them. Good enough to time spot jobs, not to predict prices.
 
 **Listings barely move together.** The same instance type in two regions correlates at 0.014
 daily. Different chips in the same region correlate at 0.074 daily and 0.12 weekly. Region
@@ -39,16 +41,17 @@ matters more than chip, which points to local capacity. There's no single "H100 
 
 ![AWS spot local markets](docs/img/aws_local_markets.png)
 
-**Volatility does cluster, mostly over weeks.** Changes come in runs: there's a 99% chance of a
-change after a day with one, and 19% after a quiet day (35% if each listing's days are shuffled
-within the month). About a quarter of quiet days are spot sitting at the on-demand price, which
-it never goes above. H100 and H200 sit at that cap on 11-12% of days.
+**Volatility does cluster, mostly over weeks.** Quiet days come in runs: after a quiet day there's
+a 19% chance of a change, against 35% if each listing's days are shuffled within the month. Spot
+never goes above the on-demand price, and a price stuck at that cap sits still by construction,
+but that isn't the cause: dropping days at the cap still gives 24% against 39%. (Across all AWS
+spot listings, H100 and H200 sit at the cap on 11-12% of days.)
 
-Move size clusters too. With momentum removed, consecutive move sizes correlate at 0.17, against
-0.00 when shuffled. Shuffling only within each month still gives 0.11, so most of it is calm and
-busy stretches lasting weeks, with a smaller day-to-day effect on top. 27% of listings beat the
-within-month shuffle (5% expected). GARCH(1,1) only finds 8%, but it fits badly to mostly tiny
-moves with the odd jump.
+Move size clusters too. On days with a move, and with momentum removed, consecutive move sizes
+correlate at 0.17, against 0.00 when shuffled. Shuffling only within each month still gives 0.11,
+so most of it is calm and busy stretches lasting weeks, with a smaller day-to-day effect on top. A
+third of listings beat their own within-month shuffle (5% expected). GARCH(1,1) only finds 8%, but
+it fits badly to mostly tiny moves with the odd jump.
 
 ## Other providers
 
@@ -59,8 +62,9 @@ and Daytona never changed a price. Providers don't reprice together, even for th
 ![Four providers, four pricing styles](docs/img/pricing_styles.png)
 
 Spot prices rose over the year. H100 spot is up 38% counting only day-to-day changes, or 77%
-including moves made during data gaps. On-demand barely moves: the increases that did happen
-(Lambda about 14% twice, Verda a couple of times) all fell on days the scraper missed.
+including moves made during data gaps. On-demand changes rarely, but in big steps: the matched
+on-demand index is up 16% for H100, 18% for H200 and 32% for B200, almost all of it on days the
+scraper missed (Lambda raised prices about 14% twice, Verda a couple of times).
 
 ![Spot price index by chip](docs/img/spot_index.png)
 

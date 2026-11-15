@@ -266,12 +266,16 @@ def ar_filter(R, pmax=5):
     return pd.DataFrame(E, index=R.index, columns=R.columns), pd.Series(chosen, index=R.columns, name="ar_p")
 
 
-def aws_spot_active(R, meta, min_obs=100, min_move=0.3):
-    """AWS spot listings with enough data and enough movement (used by clustering + GARCH)."""
+def aws_spot_active(R, meta, min_obs=100, min_move=0.3, until=None):
+    """AWS spot listings with enough data and enough movement (used by clustering + GARCH).
+    until: judge data, movement and duplicates on days <= until only (full-length series are
+    returned), so an out-of-sample test after `until` doesn't pick its listings with hindsight."""
     ids = meta.index[(meta.provider == "aws") & meta.is_spot]
     Ra = R[ids]
-    n = Ra.notna().sum()
-    return dedupe_paths(Ra.loc[:, (n >= min_obs) & ((Ra.abs() > EPS).sum() / n >= min_move)])
+    sub = Ra if until is None else Ra.loc[:until]
+    n = sub.notna().sum()
+    sub = sub.loc[:, (n >= min_obs) & ((sub.abs() > EPS).sum() / n.clip(lower=1) >= min_move)]
+    return Ra[dedupe_paths(sub).columns]
 
 
 def spot_chained_indexes(R, meta, min_days=150, min_move=0.1):

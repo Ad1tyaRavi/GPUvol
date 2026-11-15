@@ -2,7 +2,8 @@
 
  A. Momentum     - does today's move predict the next week? Pooled slope of the next-7-day return
                    on today's return (days with a change), by size of today's move, and out of
-                   sample (fit through August, test September onward).
+                   sample (listings picked and slope fit on data through August, tested on
+                   September onward).
  B. Local markets- do listings move together? Median pairwise correlation of returns (daily and
                    weekly) for pairs sharing an instance type across regions, sharing a region
                    across chips, or sharing neither. Null: circularly shift every listing by its
@@ -10,10 +11,11 @@
                    weekday pattern, destroys alignment between listings), 30 times.
  C. Timing vs size - "clustering" split into whether a price changes (quiet days come in runs?)
                    and how big the changes are (corr of log|move| on consecutive change days,
-                   raw and AR-filtered). Both are compared with shuffles of each listing's own
-                   values: a plain shuffle and a weekday x 30-day blocked one.
- D. On-demand ceiling - spot never exceeds on-demand for the same instance/region. How often is
-                   it at that ceiling, and how much of the quiet time does the ceiling explain?
+                   raw and AR-filtered, per listing). Both are compared with shuffles of each
+                   listing's own values: a plain shuffle and a weekday x 30-day blocked one.
+ D. On-demand ceiling - spot never exceeds on-demand for the same instance/region. How often is it
+                   at that ceiling, and how much of the quiet time does it explain? (C reruns
+                   the timing test without at-ceiling days.)
 
 Same sampling and stale-feed fixes as the other scripts (common.py); universe for A-C is
 common.aws_spot_active (>= 100 daily returns, moves on >= 30% of days, identical paths collapsed).
@@ -36,14 +38,23 @@ print(f"AWS spot listings: {A.shape[1]}")
 
 # ------------------------------------------------------------------ A. momentum
 H = 7
-fwd = np.full_like(X, np.nan)
-for t in range(len(X) - H):
-    w = X[t + 1:t + 1 + H]
-    fwd[t] = np.where(np.isnan(w).any(0), np.nan, w.sum(0))  # next 7 days, only if all observed
-day_of = np.repeat(A.index.values[:, None], X.shape[1], axis=1).ravel()
-x, y, d = X.ravel(), fwd.ravel(), day_of
-keep = ~np.isnan(x) & ~np.isnan(y) & (np.abs(x) > EPS)
-x, y, d = x[keep], y[keep], d[keep]
+SPLIT = "2026-09-01"
+
+
+def today_vs_next(F):
+    """(today's change, next-7-day change, day) on days with a change and all 7 next days observed."""
+    Z = F.to_numpy()
+    fwd = np.full_like(Z, np.nan)
+    for t in range(len(Z) - H):
+        w = Z[t + 1:t + 1 + H]
+        fwd[t] = np.where(np.isnan(w).any(0), np.nan, w.sum(0))
+    d = np.repeat(F.index.values[:, None], Z.shape[1], axis=1).ravel()
+    x, y = Z.ravel(), fwd.ravel()
+    k = ~np.isnan(x) & ~np.isnan(y) & (np.abs(x) > EPS)
+    return x[k], y[k], d[k]
+
+
+x, y, d = today_vs_next(A)
 
 
 def fit(xx, yy):
@@ -52,13 +63,17 @@ def fit(xx, yy):
             "same_direction": (np.sign(yy) == np.sign(xx)).mean(), "n": len(xx)}
 
 
-train, test = d < np.datetime64("2026-09-01"), d >= np.datetime64("2026-09-01")
-b_tr = fit(x[train], y[train])["slope"]
+# Out of sample: listings chosen, and the slope fitted, on data before September only; tested on
+# those same listings from September onward (no hindsight in which listings are tested).
+xo, yo, do = today_vs_next(aws_spot_active(R, meta, until=pd.Timestamp(SPLIT) - pd.Timedelta(days=1)))
+train, test = do < np.datetime64(SPLIT), do >= np.datetime64(SPLIT)
+b_tr = fit(xo[train], yo[train])["slope"]
 # "slope" here is the slope refit on the test period itself, so it can be compared with the
 # training slope; r2 is out of sample (training slope applied to test rows).
-oos = {"slope": fit(x[test], y[test])["slope"], "train_slope": b_tr,
-       "r2": 1 - ((y[test] - b_tr * x[test]) ** 2).sum() / ((y[test] - y[test].mean()) ** 2).sum(),
-       "same_direction": (np.sign(y[test]) == np.sign(x[test])).mean(), "n": int(test.sum())}
+xt, yt = xo[test], yo[test]
+oos = {"slope": fit(xt, yt)["slope"], "train_slope": b_tr,
+       "r2": 1 - ((yt - b_tr * xt) ** 2).sum() / ((yt - yt.mean()) ** 2).sum(),
+       "same_direction": (np.sign(yt) == np.sign(xt)).mean(), "n": int(test.sum())}
 rows = {"all": fit(x, y), "out_of_sample_sep_nov": oos}
 q = pd.qcut(np.abs(x), 4, labels=["smallest", "2nd", "3rd", "largest"])
 for lab in q.categories:
@@ -114,6 +129,20 @@ local = pd.DataFrame(rows)
 local["beats_null"] = local.median_corr > local.null_p975
 local.round(4).to_csv(os.path.join(OUT, "aws_comovement.csv"), index=False)
 
+# ------------------------------------------------------------------ on-demand ceiling (data)
+# Spot never goes above on-demand for the same instance/region. Built here because C uses it.
+df = load_raw(columns=KEY + ["price_per_hour"])
+df = pick_daily(df[(df.provider == "aws") & ~stale_rows(df.provider, df.day)], KEY)
+pair = [c for c in KEY if c != "is_spot"]
+p = df.pivot_table(index=pair + ["day"], columns="is_spot", values="price_per_hour").dropna()
+p.columns = ["od", "spot"]
+p["at_ceiling"] = p.spot >= p.od - 1e-9
+# day x listing grid aligned with A: True where that listing's spot price sat at on-demand
+cg = m[pair].reset_index().merge(p.at_ceiling.reset_index(), on=pair)
+sid_col = m.index.name or "index"
+CEIL = (cg.pivot(index="day", columns=sid_col, values="at_ceiling").reindex(index=A.index, columns=A.columns)
+        .fillna(False).astype(bool).to_numpy())
+
 # ------------------------------------------------------------------ C. timing vs size
 I = np.where(np.isnan(X), np.nan, (np.abs(X) > EPS).astype(float))
 quiet_runs = []
@@ -130,14 +159,15 @@ quiet_runs = np.array(quiet_runs)
 
 
 def size_corr(Z, chg):
-    out = []
+    """Per listing: corr of log|move| on consecutive change days (NaN if < 30 such pairs)."""
+    out = np.full(Z.shape[1], np.nan)
     for j in range(Z.shape[1]):
         z, c = Z[:, j], chg[:, j]
         u, v = z[1:], z[:-1]
         k = c[1:] & c[:-1] & ~np.isnan(u) & ~np.isnan(v) & (u != 0) & (v != 0)
         if k.sum() >= 30:
-            out.append(np.corrcoef(np.log(np.abs(u[k])), np.log(np.abs(v[k])))[0, 1])
-    return np.median(out)
+            out[j] = np.corrcoef(np.log(np.abs(u[k])), np.log(np.abs(v[k])))[0, 1]
+    return out
 
 
 def transitions(I):
@@ -153,37 +183,50 @@ after_chg, after_quiet = transitions(I)
 # Null for the timing result: the same blocked shuffle of each listing's change days. Pooled
 # transition rates mix listings with different change rates, so even shuffled data shows runs.
 null_t = np.array([transitions(shuffle_cols_blocked(I, rng, A.index)) for _ in range(100)])
+# Same test without the ceiling: a price stuck at on-demand can't rise, so it sits still for days
+# by construction. Drop every return whose day, or the day before, is at the ceiling.
+at_cap = CEIL | np.vstack([np.zeros((1, CEIL.shape[1]), bool), CEIL[:-1]])
+I_ex = np.where(at_cap, np.nan, I)
+after_chg_ex, after_quiet_ex = transitions(I_ex)
+null_ex = np.array([transitions(shuffle_cols_blocked(I_ex, rng, A.index)) for _ in range(100)])
 timing = {"p_change": np.nanmean(I),
           "p_change_after_change": after_chg,
           "p_change_after_quiet_day": after_quiet,
           "p_change_after_quiet_day_null_median": np.median(null_t[:, 1]),
           "p_change_after_quiet_day_null_p025": np.percentile(null_t[:, 1], 2.5),
+          "ex_ceiling_share_returns_dropped": 1 - np.isfinite(I_ex).sum() / np.isfinite(I).sum(),
+          "ex_ceiling_p_change": np.nanmean(I_ex),
+          "ex_ceiling_p_change_after_change": after_chg_ex,
+          "ex_ceiling_p_change_after_quiet_day": after_quiet_ex,
+          "ex_ceiling_p_change_after_quiet_day_null_median": np.median(null_ex[:, 1]),
+          "ex_ceiling_p_change_after_quiet_day_null_p025": np.percentile(null_ex[:, 1], 2.5),
           "quiet_runs": len(quiet_runs),
           "share_quiet_days_in_runs_ge3": quiet_runs[quiet_runs >= 3].sum() / quiet_runs.sum()}
 # Size correlation is measured on change days only. The nulls shuffle only those days' values
 # (raw moves, or AR residuals on the same days), so actual and null use the same days.
 # Two nulls: a plain shuffle (no clustering at any horizon) and the weekday x 30-day blocked
 # shuffle (keeps month-level volatility regimes, so it only tests clustering within a month).
+# Per listing, "beats" = its own correlation is above the 95th percentile of its own 100 shuffles
+# (5% of listings would beat it by chance).
 for name, Z in [("raw", X), ("ar_filtered", E)]:
     Zc = np.where(chg, Z, np.nan)
     nulls = {"plain": [], "blocked": []}
     for _ in range(100):
         for kind, S in [("plain", shuffle_cols(Zc, rng)), ("blocked", shuffle_cols_blocked(Zc, rng, A.index))]:
             nulls[kind].append(size_corr(S, ~np.isnan(S)))
-    timing[f"size_corr_{name}"] = size_corr(Z, chg)
+    actual = size_corr(Z, chg)
+    timing[f"size_corr_{name}"] = np.nanmedian(actual)
+    timing[f"size_corr_{name}_listings"] = np.isfinite(actual).sum()
     for kind, nl in nulls.items():
-        timing[f"size_corr_{name}_{kind}_null_median"] = np.median(nl)
-        timing[f"size_corr_{name}_{kind}_null_p975"] = np.percentile(nl, 97.5)
+        nl = np.array(nl)  # (shuffles, listings)
+        timing[f"size_corr_{name}_{kind}_null_median"] = np.median(np.nanmedian(nl, axis=1))
+        timing[f"size_corr_{name}_{kind}_null_p975"] = np.percentile(np.nanmedian(nl, axis=1), 97.5)
+        ok = np.isfinite(actual)
+        timing[f"size_corr_{name}_share_beats_{kind}_null"] = (actual[ok] > np.nanpercentile(nl[:, ok], 95, axis=0)).mean()
 timing = pd.Series(timing)
 timing.round(4).to_csv(os.path.join(OUT, "aws_timing_vs_size.csv"), header=["value"])
 
 # ------------------------------------------------------------------ D. on-demand ceiling
-df = load_raw(columns=KEY + ["price_per_hour"])
-df = pick_daily(df[(df.provider == "aws") & ~stale_rows(df.provider, df.day)], KEY)
-pair = [c for c in KEY if c != "is_spot"]
-p = df.pivot_table(index=pair + ["day"], columns="is_spot", values="price_per_hour").dropna()
-p.columns = ["od", "spot"]
-p["at_ceiling"] = p.spot >= p.od - 1e-9
 sp = df[df.is_spot].sort_values(KEY + ["day"])
 g = sp.groupby(KEY, dropna=False)
 sp = sp.assign(consec=sp.day - g.day.shift() == pd.Timedelta(days=1),
