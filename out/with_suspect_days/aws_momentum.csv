@@ -1,0 +1,7 @@
+,slope,r2,same_direction,n,train_slope,median_abs_today_pct
+all,0.5801,0.0391,0.6005,67768.0,,
+out_of_sample_sep_nov,1.6048,0.0495,0.6032,23518.0,0.3668,
+today_smallest_quarter,1.2496,0.0008,0.5347,16942.0,,0.1551
+today_2nd_quarter,1.3958,0.0114,0.5637,16942.0,,0.7503
+today_3rd_quarter,1.9353,0.0812,0.623,16942.0,,2.0986
+today_largest_quarter,0.5014,0.0455,0.6806,16942.0,,4.7486

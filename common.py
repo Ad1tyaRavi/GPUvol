@@ -15,10 +15,11 @@ SRC = os.path.join(HERE, "all.parquet")
 CACHE = os.path.join(HERE, "data", "daily_returns_cache.pkl")
 
 # --- daily sampling ----------------------------------------------------------------------------
-# The scraper runs 1-3 times a day at varying times (09:00 and 21:00 on a schedule, plus runs at
-# ~10:00-15:00). Taking the day's *last* snapshot made a "daily" return span anything from ~10h to
-# ~40h, and AWS spot changes far more often over the long ones. Each listing-day instead uses the
-# snapshot closest to 09:00 UTC (Jan-Mar snapshots were all ~09:20), so returns are ~24h apart.
+# The scraper runs 1-3 times a day at varying times. Taking the day's *last* snapshot made a
+# "daily" return span anything from ~10h to ~40h, and AWS spot changes far more often over the
+# long ones. Each listing-day instead uses the snapshot closest to 09:00 UTC. Only about a third
+# of days have one near 09:00 (most picks fall between 10:00 and 16:00), but consecutive days tend
+# to share a time, so the gap between picks is still ~24h (middle half 23.7-24.2h).
 SAMPLE_HOUR_UTC = 9.0
 
 # --- data-hygiene settings (see audit.py) ------------------------------------------------------

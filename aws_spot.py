@@ -66,7 +66,9 @@ def fit(xx, yy):
 # Out of sample: listings chosen, and the slope fitted, on data before September only; tested on
 # those same listings from September onward (no hindsight in which listings are tested).
 xo, yo, do = today_vs_next(aws_spot_active(R, meta, until=pd.Timestamp(SPLIT) - pd.Timedelta(days=1)))
-train, test = do < np.datetime64(SPLIT), do >= np.datetime64(SPLIT)
+# Training rows need their whole next-7-day window before the split, so no test-period prices
+# leak into the training slope.
+train, test = do + np.timedelta64(H, "D") < np.datetime64(SPLIT), do >= np.datetime64(SPLIT)
 b_tr = fit(xo[train], yo[train])["slope"]
 # "slope" here is the slope refit on the test period itself, so it can be compared with the
 # training slope; r2 is out of sample (training slope applied to test rows).
