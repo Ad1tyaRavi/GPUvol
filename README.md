@@ -8,10 +8,7 @@ prices from about 15 providers, scraped 1-3 times a day from January to November
 rows).
 
 Most providers don't behave like a market at all. They change prices by hand or on a schedule.
-The one big market that reprices daily is AWS spot (~520 listings, a change on 94% of days). It
-partly does: volatility clusters, but prices also trend for days, which arbitrage would normally
-stop. You can't store GPU-hours, so nothing does.
-
+The one big market that reprices daily is AWS spot (~520 listings, a change on 94% of days).
 ## AWS spot
 
 **Moves keep going.** If a listing moves today, the next 7 days add another 1.45x that move on
