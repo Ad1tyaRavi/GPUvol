@@ -3,7 +3,7 @@
  A. Momentum     - does today's move predict the next week? Pooled slope of the next-7-day return
                    on today's return (days with a change), by size of today's move, and out of
                    sample (listings picked and slope fit on data through August, tested on
-                   September onward).
+                   September onward). 95% intervals resample whole 14-day blocks of days.
  B. Local markets- do listings move together? Median pairwise correlation of returns (daily and
                    weekly) for pairs sharing an instance type across regions, sharing a region
                    across chips, or sharing neither. Null: circularly shift every listing by its
@@ -63,6 +63,35 @@ def fit(xx, yy):
             "same_direction": (np.sign(yy) == np.sign(xx)).mean(), "n": len(xx)}
 
 
+# 95% intervals by resampling whole 14-day blocks of days. Rows are not independent: next-7-day
+# windows of nearby days overlap, and listings move together on the same day (B below). Keeping
+# every listing-day of a block together covers both; 14 days is twice the forecast window.
+BLOCK_DAYS, N_BOOT = 14, 1000
+boot_rng = np.random.default_rng(14)  # own stream, so B and C below draw the same shuffles as before
+
+
+def block_ci(xx, yy, dd, b=None):
+    """Intervals for the slope and hit rate; with a fixed slope b, also for out-of-sample R^2.
+    Every statistic is a ratio of sums, so each resample is a weighted sum of per-block totals."""
+    blk = np.unique((dd - dd.min()) // np.timedelta64(BLOCK_DAYS, "D"), return_inverse=True)[1]
+    k = blk.max() + 1
+    tot = lambda v: np.bincount(blk, v, minlength=k)
+    S = {"n": tot(np.ones_like(xx)), "xy": tot(xx * yy), "xx": tot(xx * xx), "y": tot(yy), "yy": tot(yy * yy),
+         "hit": tot((np.sign(yy) == np.sign(xx)).astype(float))}
+    if b is not None:
+        S["sse"] = tot((yy - b * xx) ** 2)
+    W = np.stack([np.bincount(boot_rng.integers(0, k, k), minlength=k) for _ in range(N_BOOT)])
+    s = {key: W @ v for key, v in S.items()}
+    stats = {"slope": s["xy"] / s["xx"], "same_direction": s["hit"] / s["n"]}
+    if b is not None:
+        stats["r2"] = 1 - s["sse"] / (s["yy"] - s["y"] ** 2 / s["n"])
+    out = {}
+    for key, v in stats.items():
+        out[f"{key}_p025"], out[f"{key}_p975"] = np.percentile(v, [2.5, 97.5])
+    out["blocks"] = k
+    return out
+
+
 # Out of sample: listings chosen, and the slope fitted, on data before September only; tested on
 # those same listings from September onward (no hindsight in which listings are tested).
 xo, yo, do = today_vs_next(aws_spot_active(R, meta, until=pd.Timestamp(SPLIT) - pd.Timedelta(days=1)))
@@ -76,11 +105,15 @@ xt, yt = xo[test], yo[test]
 oos = {"slope": fit(xt, yt)["slope"], "train_slope": b_tr,
        "r2": 1 - ((yt - b_tr * xt) ** 2).sum() / ((yt - yt.mean()) ** 2).sum(),
        "same_direction": (np.sign(yt) == np.sign(xt)).mean(), "n": int(test.sum())}
-rows = {"all": fit(x, y), "out_of_sample_sep_nov": oos}
+tr_ci = block_ci(xo[train], yo[train], do[train])
+oos.update(block_ci(xt, yt, do[test], b=b_tr), train_slope_p025=tr_ci["slope_p025"],
+           train_slope_p975=tr_ci["slope_p975"])
+rows = {"all": {**fit(x, y), **block_ci(x, y, d)}, "out_of_sample_sep_nov": oos}
 q = pd.qcut(np.abs(x), 4, labels=["smallest", "2nd", "3rd", "largest"])
 for lab in q.categories:
     s = np.asarray(q == lab)
-    rows[f"today_{lab}_quarter"] = {**fit(x[s], y[s]), "median_abs_today_pct": 100 * np.median(np.abs(x[s]))}
+    rows[f"today_{lab}_quarter"] = {**fit(x[s], y[s]), **block_ci(x[s], y[s], d[s]),
+                                    "median_abs_today_pct": 100 * np.median(np.abs(x[s]))}
 mom = pd.DataFrame(rows).T
 mom.round(4).to_csv(os.path.join(OUT, "aws_momentum.csv"))
 # binned means for the README chart: 20 quantile bins of today's signed move

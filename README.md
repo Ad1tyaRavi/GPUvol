@@ -12,23 +12,26 @@ The one big market that reprices daily is AWS spot (~520 listings, a change on 9
 ## AWS spot
 
 **Moves keep going.** If a listing moves today, the next 7 days add another 1.45x that move on
-average, in the same direction 60% of the time (about 70% after big moves). The effect is gone by
-day 5. Fitted through August, the slope still works on September to November: right direction
-60% of the time, R² 0.13.
+average (95% interval 1.13-1.73), in the same direction 60% of the time (about 70% after big
+moves). The effect is gone by day 5. Fitted through August, the slope still works on September to
+November: right direction 60% of the time, R² 0.13. The interval resamples whole two-week blocks,
+since nearby days overlap and listings move together.
 
 ![AWS spot momentum](docs/img/aws_momentum.png)
 
-**It's a bit forecastable.** A forecast from today's move, refit weekly on past data, tested on
-September to November against assuming no change:
+**It's a bit forecastable.** A forecast from today's move, refit weekly on past data, compared
+with assuming no change. The September to November test uses listings chosen on earlier data only:
 
 | | 1 day | 7 days | 14 days |
 |---|---|---|---|
-| squared error | -22% | -12% | -5% |
+| squared error, Sep-Nov | -22% | -12% | -5% |
+| squared error, whole year | -2% (not significant) | -9% | -3%* |
 | absolute error | -14% | -5% | -2% |
 | direction right | 71% | 59% | 55% |
 
-Over the whole year the gains are smaller, because of a few big unpredictable jumps earlier on.
-Good enough to time spot jobs, not to predict prices.
+\*The 14-day forecast is only tested from mid-August. Absolute error and direction are about the
+same over the whole year. Squared error is not: earlier in the year a few big jumps that nothing
+predicts dominate it. Good enough to time spot jobs, not to predict prices.
 
 **Listings barely move together.** The same instance type in two regions correlates at 0.014
 daily. Different chips in the same region correlate at 0.074. So region seems to matter more than
