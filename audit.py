@@ -24,7 +24,7 @@ import numpy as np
 import pandas as pd
 from scipy.stats import chi2_contingency
 
-from common import EPS, KEY, OUT, SAMPLE_HOUR_UTC, STALE_WINDOWS, load_raw, load_returns
+from common import EPS, KEY, OUT, SAMPLE_HOUR_UTC, STALE_WINDOWS, load_raw, load_returns, pick_daily
 
 pd.set_option("display.width", 220, "display.max_columns", 30, "display.max_rows", 200)
 
@@ -170,7 +170,9 @@ report["G"] = save("duplicate_series", dup.sort_values("duplication_factor", asc
 
 # ------------------------------------------------------------------ H. spot pegged to on-demand
 pair_key = [k for k in KEY if k != "is_spot"]
-d = raw.groupby(pair_key + ["day", "is_spot"], dropna=False).price_per_hour.last().unstack("is_spot").dropna()
+# Same daily sampling as the analyses: the snapshot closest to SAMPLE_HOUR_UTC per listing-day.
+d = (pick_daily(raw, KEY).set_index(pair_key + ["day", "is_spot"]).price_per_hour
+     .unstack("is_spot").dropna())
 d.columns = ["od", "spot"]
 d["ratio"] = (d.spot / d.od).round(4)
 pr = d.groupby(pair_key, dropna=False).ratio.agg(["nunique", "size", "median"]).reset_index()

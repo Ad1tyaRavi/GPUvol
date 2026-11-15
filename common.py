@@ -1,6 +1,8 @@
 """Shared helpers: chart style, raw loading with daily sampling, data-hygiene fixes, cleaned daily
 return grid, AR filter, fast within-series shuffle."""
 import glob
+import hashlib
+import inspect
 import os
 
 import matplotlib
@@ -190,9 +192,17 @@ def dedupe_paths(R):
     return R.loc[:, ~(sig.duplicated().to_numpy() & moves)]
 
 
+def _code_fingerprint():
+    """Hash of everything that shapes the cached raw return grid: the loading/sampling code and
+    its settings. Editing a filter in load_raw, KEY or the sampling hour invalidates the cache."""
+    parts = [inspect.getsource(f) for f in (load_raw, pick_daily, _load_raw_returns)]
+    parts += [repr(KEY), repr(SAMPLE_HOUR_UTC)]
+    return hashlib.sha256("\n".join(parts).encode()).hexdigest()
+
+
 def _load_raw_returns():
     _ensure_src()
-    sig = (os.path.getmtime(SRC), os.path.getsize(SRC), SAMPLE_HOUR_UTC)
+    sig = (os.path.getmtime(SRC), os.path.getsize(SRC), _code_fingerprint())
     if os.path.exists(CACHE):
         cached = pd.read_pickle(CACHE)
         if len(cached) == 4 and cached[3] == sig:

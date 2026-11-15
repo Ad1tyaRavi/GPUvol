@@ -44,6 +44,8 @@ the on-demand cap (spot never goes above it): without those days it's 24% agains
 Move sizes cluster too. With momentum removed, consecutive move sizes correlate at 0.17, against
 0.00 when shuffled. Shuffling within each month still gives 0.11, so most of it is calm and busy
 stretches lasting weeks. A third of listings beat their own within-month shuffle (5% expected).
+GARCH(1,1) finds little: 8% of listings beat a calibrated threshold, against 5% on shuffled data.
+It's a poor fit for mostly tiny moves with the odd jump.
 
 ## Other providers
 

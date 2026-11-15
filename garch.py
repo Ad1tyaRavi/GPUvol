@@ -19,8 +19,9 @@ Tests:
     occasional jumps, far from Gaussian. So the threshold is calibrated instead: refit after
     shuffling each series within weekday x 30-day blocks (keeps weekly schedules and slow regime
     shifts, destroys short-horizon timing), and call a series significant if its LR beats
-    the shuffled 95th percentile (per series, 20 shuffles, for the indexes; pooled over listings,
-    1 shuffle each, for AWS).
+    the shuffled 95th percentile (per series, 100 shuffles, for the indexes; pooled over listings,
+    1 shuffle each, for AWS). The "(shuffled)" rows use a second, independent set of shuffles
+    scored against that threshold, so their significant share is a real check on the 5% rate.
   * Persistence alpha + beta only means something when alpha > 0: with alpha = 0 the variance is
     constant and beta is not identified. Persistence and half-life are reported for alpha >= 0.01.
 """
@@ -88,27 +89,39 @@ def fit_garch(e):
 ALPHA_MIN = 0.01
 
 
-def fit_all(E, label, reps=1):
-    """Fit every column, plus `reps` shuffled refits per column for the calibrated LR threshold."""
-    rows, null_rows = {}, []
+def shuffled_fits(X, index, columns, reps):
+    """`reps` blocked-shuffle refits per column, as a DataFrame indexed by series."""
+    rows = []
+    for _ in range(reps):
+        S = shuffle_cols_blocked(X, rng, index)
+        for j, col in enumerate(columns):
+            rn = fit_garch(S[:, j])
+            if rn is not None:
+                rows.append({"series": col, **rn})
+    return pd.DataFrame(rows).set_index("series").astype(float)
+
+
+def fit_all(E, label, reps=1, held_out=None):
+    """Fit every column, plus `reps` shuffled refits per column for the calibrated LR threshold.
+
+    The "(shuffled)" summary row comes from a separate set of `held_out` shuffled refits (default:
+    as many as `reps`), tested against that threshold. Scoring the calibration fits against their
+    own 95th percentile would give 5% by construction; held-out fits check that the threshold
+    really holds a 5% false-positive rate."""
+    rows = {}
     X = E.to_numpy()
     for j, col in enumerate(E.columns):
         r = fit_garch(X[:, j])
         if r is not None:
             rows[col] = r
-    for k in range(reps):
-        S = shuffle_cols_blocked(X, rng, E.index)
-        for j, col in enumerate(E.columns):
-            rn = fit_garch(S[:, j])
-            if rn is not None:
-                null_rows.append({"series": col, **rn})
     res = pd.DataFrame(rows).T.astype(float)
-    null = pd.DataFrame(null_rows).set_index("series").astype(float)
+    calib = shuffled_fits(X, E.index, E.columns, reps)
+    null = shuffled_fits(X, E.index, E.columns, reps if held_out is None else held_out)
     if reps > 1:   # per-series threshold
-        res["lr_crit"] = null.groupby(level=0).lr_stat.quantile(0.95)
+        res["lr_crit"] = calib.groupby(level=0).lr_stat.quantile(0.95)
         null["sig_calibrated"] = null.lr_stat > res.lr_crit.reindex(null.index).to_numpy()
     else:          # pooled threshold across series
-        res["lr_crit"] = null.lr_stat.quantile(0.95)
+        res["lr_crit"] = calib.lr_stat.quantile(0.95)
         null["sig_calibrated"] = null.lr_stat > res.lr_crit.iloc[0]
     res["sig_calibrated"] = res.lr_stat > res.lr_crit
     for d in (res, null):
@@ -133,7 +146,9 @@ aws_res, aws_null, aws_sum = fit_all(E_aws, "AWS spot listings")
 aws_res.join(meta).round(4).to_csv(os.path.join(OUT, "garch_aws_spot_series.csv"))
 
 E_idx, _ = ar_filter(spot_chained_indexes(R, meta))
-idx_res, idx_null, idx_sum = fit_all(E_idx, "spot GPU indexes", reps=20)
+# 100 shuffles per index: a per-series 95th percentile from only 20 shuffles let ~12% of held-out
+# shuffled fits through, not 5%.
+idx_res, idx_null, idx_sum = fit_all(E_idx, "spot GPU indexes", reps=100)
 idx_res.round(4).sort_values("persistence", ascending=False).to_csv(os.path.join(OUT, "garch_spot_index_series.csv"))
 
 summary = pd.concat([aws_sum, idx_sum])
