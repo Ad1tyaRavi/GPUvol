@@ -66,7 +66,7 @@ def fit(xx, yy):
 # 95% intervals by resampling whole 14-day blocks of days. Rows are not independent: next-7-day
 # windows of nearby days overlap, and listings move together on the same day (B below). Keeping
 # every listing-day of a block together covers both; 14 days is twice the forecast window.
-BLOCK_DAYS, N_BOOT = 14, 1000
+BLOCK_DAYS, N_BOOT, MIN_BLOCKS = 14, 1000, 10
 boot_rng = np.random.default_rng(14)  # own stream, so B and C below draw the same shuffles as before
 
 
@@ -87,7 +87,11 @@ def block_ci(xx, yy, dd, b=None):
         stats["r2"] = 1 - s["sse"] / (s["yy"] - s["y"] ** 2 / s["n"])
     out = {}
     for key, v in stats.items():
-        out[f"{key}_p025"], out[f"{key}_p975"] = np.percentile(v, [2.5, 97.5])
+        # With only a few blocks a resample can't vary much, so the interval comes out far too
+        # narrow (Sep-Nov has 4). Report none below MIN_BLOCKS; the draws still happen so the
+        # random stream, and every other interval, stays the same.
+        lo, hi = np.percentile(v, [2.5, 97.5]) if k >= MIN_BLOCKS else (np.nan, np.nan)
+        out[f"{key}_p025"], out[f"{key}_p975"] = lo, hi
     out["blocks"] = k
     return out
 

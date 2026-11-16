@@ -9,6 +9,7 @@ rows).
 
 Most providers don't behave like a market at all. They change prices by hand or on a schedule.
 The one big market that reprices daily is AWS spot (~520 listings, a change on 94% of days).
+
 ## AWS spot
 
 **Moves keep going.** If a listing moves today, the next 7 days add another 1.45x that move on
