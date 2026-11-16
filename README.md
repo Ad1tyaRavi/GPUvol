@@ -13,8 +13,8 @@ The one big market that reprices daily is AWS spot (~520 listings, a change on 9
 ## AWS spot
 
 **Moves keep going.** If a listing moves today, the next 7 days add another 1.45x that move on
-average (95% interval 1.13-1.73), in the same direction 60% of the time (about 70% after big
-moves). The effect is gone by day 5. Fitted through August, the slope still works on September to
+average (95% interval 1.13-1.73), in the same direction 60% of the time (chance is 50%, and it's
+the same after rises and falls; about 70% after big moves). The effect is gone by day 5. Fitted through August, the slope still works on September to
 November: right direction 60% of the time, R² 0.13. The interval resamples whole two-week blocks,
 since nearby days overlap and listings move together.
 
@@ -81,7 +81,7 @@ including moves made during data gaps. On-demand changes rarely but in big steps
 - No data from 10 March to 7 May, plus a few short outages.
 - The feed froze for every provider from 8 to 24 May and on 1 June, and for AWS and GCP from 25
   June to 22 July. I treat those days as missing. This matters: left in, the momentum slope drops
-  to 0.58x and the forecast gains vanish.
+  to 0.58x, the whole-year forecast gains vanish, and the September to November gains halve.
 - Snapshot times are irregular, and `available` is always true, so there's no capacity signal.
 - "A100" mixes 40/80 GB and SXM/PCIe cards, and GPU slices are labeled as whole GPUs.
 - It's list prices only, over one year in a rising market.
